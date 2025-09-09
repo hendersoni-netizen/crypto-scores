@@ -1,17 +1,40 @@
-
-<!doctype html><html><head>
-<meta charset="utf-8"><meta http-equiv="refresh" content="60">
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
 <title>Buy Scores</title>
 <style>
 body { font-family: -apple-system, Helvetica, Arial, sans-serif; margin: 20px; }
-table { border-collapse: collapse; width: 100%; }
+h2 { margin: 0 0 8px; }
+.status { display: flex; gap: 16px; align-items: center; margin: 8px 0 14px; flex-wrap: wrap; }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 6px #22c55e; transition: background .2s, box-shadow .2s; }
+.kv span { color: #111; font-weight: 600; }
+.kv small { color: #666; }
+table { border-collapse: collapse; width: 100%; margin-top: 16px; }
 th, td { border: 1px solid #ddd; padding: 6px; text-align: right; }
-th { background: #f5f5f5; }
-</style></head>
+th { background: #f5f5f5; text-align: center; }
+.container { max-width: 1100px; margin: 0 auto; }
+canvas { width: 100%; height: 420px; }
+.note { color: #666; font-size: 12px; margin-top: 6px; }
+</style>
+</head>
 <body>
-<h2>Buy Scores (latest per symbol)</h2>
-<p>Updated: 2025-09-09T21:37:10.560679+00:00</p>
-<table border="1" class="dataframe">
+<div class="container">
+  <h2>Buy Scores (latest per symbol)</h2>
+  <div class="status">
+    <div id="statusDot" class="dot" title="Status"></div>
+    <div class="kv">Last run (UTC): <span id="lastRun">2025-09-09T22:12:44.848752+00:00</span></div>
+    <div class="kv"><small>Uptime since last run:</small> <span id="uptime">—</span></div>
+    <div class="kv"><small>Next run in (~every 5 min):</small> <span id="countdown">—</span></div>
+  </div>
+
+  <div style="margin: 12px 0;">
+    <canvas id="scoreChart"></canvas>
+    <div class="note">X axis shows time reversed: left = 6 hours ago, right = now.</div>
+  </div>
+
+  <div id="tableWrap">
+    <table border="1" class="dataframe">
   <thead>
     <tr style="text-align: right;">
       <th>symbol</th>
@@ -32,49 +55,145 @@ th { background: #f5f5f5; }
   <tbody>
     <tr>
       <td>BTC/USDT</td>
-      <td>2025-09-09T21:37:06.719558+00:00</td>
+      <td>2025-09-09T22:12:44.848752+00:00</td>
       <td>25</td>
-      <td>111500.2600</td>
-      <td>111366.0114</td>
-      <td>111628.2704</td>
-      <td>52.2300</td>
-      <td>-60.8381</td>
-      <td>-150.0303</td>
-      <td>89.1922</td>
-      <td>110842.8685</td>
-      <td>111215.6670</td>
-      <td>111588.4655</td>
+      <td>111529.3800</td>
+      <td>111371.0577</td>
+      <td>111617.5144</td>
+      <td>53.1479</td>
+      <td>-45.3046</td>
+      <td>-116.7051</td>
+      <td>71.4004</td>
+      <td>110890.8287</td>
+      <td>111252.8265</td>
+      <td>111614.8243</td>
     </tr>
     <tr>
       <td>ETH/USDT</td>
-      <td>2025-09-09T21:37:06.719558+00:00</td>
+      <td>2025-09-09T22:12:44.848752+00:00</td>
       <td>25</td>
-      <td>4308.6700</td>
-      <td>4297.8968</td>
-      <td>4307.3585</td>
-      <td>54.5848</td>
-      <td>-1.7094</td>
-      <td>-5.7289</td>
-      <td>4.0195</td>
-      <td>4275.2910</td>
-      <td>4292.1530</td>
-      <td>4309.0150</td>
+      <td>4314.9600</td>
+      <td>4299.4219</td>
+      <td>4307.4929</td>
+      <td>58.0231</td>
+      <td>-0.1513</td>
+      <td>-4.0412</td>
+      <td>3.8899</td>
+      <td>4274.7307</td>
+      <td>4293.7535</td>
+      <td>4312.7763</td>
     </tr>
     <tr>
       <td>ONDO/USDT</td>
-      <td>2025-09-09T21:37:06.719558+00:00</td>
+      <td>2025-09-09T22:12:44.848752+00:00</td>
       <td>25</td>
-      <td>0.9536</td>
-      <td>0.9538</td>
-      <td>0.9546</td>
-      <td>49.2121</td>
-      <td>-0.0004</td>
-      <td>-0.0011</td>
-      <td>0.0007</td>
-      <td>0.9469</td>
-      <td>0.9526</td>
-      <td>0.9583</td>
+      <td>0.9540</td>
+      <td>0.9534</td>
+      <td>0.9547</td>
+      <td>50.1227</td>
+      <td>-0.0006</td>
+      <td>-0.0010</td>
+      <td>0.0004</td>
+      <td>0.9475</td>
+      <td>0.9527</td>
+      <td>0.9579</td>
     </tr>
   </tbody>
 </table>
-</body></html>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+<script>
+const INTERVAL_MINUTES=5;
+const LOOKBACK_HOURS=6;
+const FRESH_THRESHOLD_MS=10*60*1000;
+
+const statusDot=document.getElementById('statusDot');
+const lastRunEl=document.getElementById('lastRun');
+const uptimeEl=document.getElementById('uptime');
+const countdownEl=document.getElementById('countdown');
+
+const ctx=document.getElementById('scoreChart').getContext('2d');
+const chart=new Chart(ctx,{
+  type:'line',
+  data:{labels:[],datasets:[]},
+  options:{
+    responsive:true,
+    interaction:{mode:'nearest',intersect:false},
+    plugins:{legend:{position:'top'},title:{display:true,text:'Strong Buy Score (0–100) — last '+LOOKBACK_HOURS+' hours'}},
+    scales:{x:{type:'time',reverse:true,time:{tooltipFormat:'HH:mm',displayFormats:{minute:'HH:mm'}},ticks:{autoSkip:true,maxTicksLimit:13}},
+            y:{min:0,max:100,ticks:{stepSize:20}}}
+});
+
+function parseCSV(text){
+  const lines=text.trim().split(/\r?\n/);
+  const headers=lines.shift().split(',');
+  return lines.map(line=>{const cols=line.split(',');const o={};headers.forEach((h,i)=>o[h]=cols[i]);return o;});
+}
+function fmt(ms){if(ms<0)ms=0;const s=Math.floor(ms/1000);const hh=String(Math.floor(s/3600)).padStart(2,'0');const mm=String(Math.floor((s%3600)/60)).padStart(2,'0');const ss=String(Math.floor(s%60)).padStart(2,'0');return `${hh}:${mm}:${ss}`;}
+function nextCountdown(now=new Date()){const m=INTERVAL_MINUTES*60*1000;const next=new Date(Math.ceil(now.getTime()/m)*m);return next-now;}
+
+function renderTable(rows){
+  const cols=["timestamp_utc","symbol","score","close","ema20","ema50","rsi","macd","macd_signal","macd_hist","bb_low","bb_mid","bb_high"];
+  let html='<table><thead><tr>'+cols.map(c=>'<th>'+c+'</th>').join('')+'</tr></thead><tbody>';
+  rows.forEach(r=>{html+='<tr>'+cols.map(c=>'<td>'+(r[c]??'')+'</td>').join('')+'</tr>';});html+='</tbody></table>';
+  document.getElementById('tableWrap').innerHTML=html;
+}
+
+function buildTimeline(endUtc,hours){
+  const end=new Date(endUtc);const start=new Date(end.getTime()-hours*60*60*1000);
+  const out=[];const step=15*60*1000;const alignedEnd=new Date(Math.floor(end.getTime()/step)*step);
+  for(let t=new Date(Math.floor(start.getTime()/step)*step);t<=alignedEnd;t=new Date(t.getTime()+step)) out.push(new Date(t).toISOString());
+  return out;
+}
+function seriesFromRows(rows,timeline){
+  const bySym={};const syms=new Set(rows.map(r=>r.symbol));syms.forEach(sym=>bySym[sym]=new Array(timeline.length).fill(null));
+  const idx=new Map(timeline.map((t,i)=>[t,i]));
+  rows.forEach(r=>{const t=new Date(r.timestamp_utc).toISOString();const i=idx.get(t);if(i!==undefined){const v=parseInt(r.score,10);if(!Number.isNaN(v)) bySym[r.symbol][i]=v;}});
+  return bySym;
+}
+
+async function loadAndUpdate(){
+  try{
+    const res=await fetch('buy_scores.csv?t='+Date.now(),{cache:'no-store'});
+    if(!res.ok) throw new Error('fetch failed: '+res.status);
+    const text=await res.text(); const rows=parseCSV(text); if(!rows.length) return;
+
+    const last=rows.reduce((a,r)=>a>r.timestamp_utc?a:r.timestamp_utc,rows[0].timestamp_utc);
+    lastRunEl.textContent=last;
+    const msSince=Date.now()-new Date(last).getTime();
+    const fresh=msSince<FRESH_THRESHOLD_MS;
+    statusDot.style.background=fresh?'#22c55e':'#ef4444';
+    statusDot.style.boxShadow=fresh?'0 0 6px #22c55e':'0 0 6px #ef4444';
+    uptimeEl.textContent=fmt(msSince);
+    countdownEl.textContent=fmt(nextCountdown());
+
+    const latestBySym=new Map();
+    rows.slice().sort((a,b)=>new Date(b.timestamp_utc)-new Date(a.timestamp_utc))
+        .forEach(r=>{if(!latestBySym.has(r.symbol)) latestBySym.set(r.symbol,r);});
+    renderTable(Array.from(latestBySym.values()));
+
+    const timeline=buildTimeline(last, 6);
+    const series=seriesFromRows(rows,timeline);
+    chart.data.labels=timeline;
+    const palette=["#1f77b4","#ff7f0e","#2ca02c","#d62728","#9467bd","#8c564b","#e377c2","#7f7f7f","#bcbd22","#17becf"];
+    const syms=Object.keys(series);
+    chart.data.datasets=syms.map((sym,i)=>({
+      label: sym,
+      data: series[sym],
+      borderColor: palette[i%palette.length],
+      backgroundColor: palette[i%palette.length],
+      spanGaps: true, tension: .25, pointRadius: 0
+    }));
+    chart.update('none');
+  }catch(e){console.error(e);}
+}
+
+loadAndUpdate();
+setInterval(()=>{const t=new Date(lastRunEl.textContent.trim());if(!isNaN(t)){const ms=Date.now()-t.getTime();uptimeEl.textContent=fmt(ms);countdownEl.textContent=fmt(nextCountdown());}},1000);
+setInterval(loadAndUpdate,30000);
+</script>
+</body>
+</html>
