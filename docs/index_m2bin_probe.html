@@ -1,0 +1,177 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>M2 Binary Probe — crypto-scores</title>
+  <style>
+    body { font-family: -apple-system, system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 16px; background:#fafafa; }
+    h1 { margin: 0 0 8px; font-size: 20px; }
+    .meta { color:#555; font-size: 12px; margin-bottom: 14px; }
+    .grid { display: grid; grid-template-columns: 1fr; gap: 20px; max-width: 1120px; margin: 0 auto; }
+    .card { background: #fff; border: 1px solid #eee; border-radius: 10px; padding: 14px; box-shadow: 0 1px 2px rgba(0,0,0,0.03); }
+    .head { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom: 8px; }
+    .title { font-weight: 700; color:#111; }
+    .controls { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+    label { font-size: 12px; color:#333; }
+    input[type="number"] { width:62px; padding:4px 6px; border:1px solid #ddd; border-radius:6px; }
+    .hint { color:#666; font-size: 11px; margin-top:6px; }
+    canvas { width: 100%; height: 320px !important; }
+  </style>
+</head>
+<body>
+  <h1>Price + M2 Binary (48h) — probe</h1>
+  <div class="meta">This page is non-destructive. It reads <code>docs/data.json</code> and renders one chart per symbol with an adjustable M2 threshold (0–100) to generate a binary 0/1 signal. Use it to validate the M2-based binary signal without touching your main page.</div>
+
+  <div id="wrap" class="grid"></div>
+
+  <!-- Chart.js + date adapter -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+
+  <script>
+  (async function(){
+    const res = await fetch('data.json?t=' + Date.now(), {cache:'no-store'});
+    if (!res.ok) {
+      document.getElementById('wrap').innerHTML = '<div class="card">Failed to load docs/data.json ('+res.status+').</div>';
+      return;
+    }
+    const d = await res.json();
+    const labels = (d.labels || []).map(ts => new Date(ts));
+    const symbols = Object.keys(d.symbols || {});
+    const wrap = document.getElementById('wrap');
+
+    if (!symbols.length) {
+      wrap.innerHTML = '<div class="card">No symbols in docs/data.json</div>';
+      return;
+    }
+
+    function makeCard(sym) {
+      const card = document.createElement('div');
+      card.className = 'card';
+      const head = document.createElement('div');
+      head.className = 'head';
+      head.innerHTML = '<div class="title">'+sym.replace(/USDT$/, 'USDT')+'</div>';
+      const ctrls = document.createElement('div');
+      ctrls.className = 'controls';
+      ctrls.innerHTML = `
+        <label><input type="checkbox" class="toggle toggle-price" checked> price</label>
+        <label><input type="checkbox" class="toggle toggle-bin" checked> M2bin</label>
+        <label>M2 threshold: <input type="number" class="thr" min="0" max="100" step="1" value="50"></label>
+      `;
+      head.appendChild(ctrls);
+      card.appendChild(head);
+
+      const c = document.createElement('canvas');
+      card.appendChild(c);
+      const hint = document.createElement('div');
+      hint.className = 'hint';
+      hint.textContent = 'Left axis: price. Right axis: M2 binary (0–1). Time range comes from docs/data.json labels.';
+      card.appendChild(hint);
+      wrap.appendChild(card);
+
+      // extract arrays
+      const s = d.symbols[sym] || {};
+      const price = (s.close || s.Close || []).map(v => Number(v));
+      const m2 = (s.M2 || s.m2 || s.M_2 || []).map(v => Number(v));
+      // align lengths with labels
+      const L = labels.length;
+      price.length = L;
+      m2.length = L;
+
+      // build datasets
+      const ctx = c.getContext('2d');
+      const chart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [
+            {
+              label: sym+' price',
+              yAxisID: 'price',
+              data: price,
+              borderColor: '#1f77b4',
+              backgroundColor: '#1f77b4',
+              tension: 0.25,
+              pointRadius: 0,
+              spanGaps: true,
+              hidden: false
+            },
+            {
+              label: 'M2bin',
+              yAxisID: 'bin',
+              data: [], // filled by computeBin()
+              borderColor: '#111',
+              backgroundColor: '#111',
+              borderDash: [6,3],
+              stepped: true,
+              tension: 0,
+              pointRadius: 0,
+              spanGaps: true,
+              hidden: false
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          interaction: { mode: 'nearest', intersect: false },
+          scales: {
+            x: {
+              type: 'time',
+              time: { tooltipFormat: 'MMM d, HH:mm', displayFormats: { minute:'HH:mm', hour:'HH:mm' } },
+              ticks: { source:'labels', autoSkip: true, maxTicksLimit: 12 }
+            },
+            price: { position: 'left', grid: { drawOnChartArea: true } },
+            bin: {
+              position: 'right',
+              min: -0.1, max: 1.1,
+              grid: { drawOnChartArea: false },
+              ticks: {
+                callback: v => (v===0 ? '0' : (v===1 ? '1' : '')),
+                maxTicksLimit: 3
+              }
+            }
+          },
+          plugins: {
+            legend: { position: 'top' },
+            title: { display: false }
+          }
+        }
+      });
+
+      // compute binary
+      function computeBin() {
+        const thr = Number(card.querySelector('.thr').value || 50);
+        const ds = chart.data.datasets.find(d => d.label==='M2bin');
+        if (!ds) return;
+        const bin = labels.map((_, i) => {
+          const v = m2[i];
+          if (!Number.isFinite(v)) return null;
+          return v > thr ? 1 : 0;
+        });
+        ds.data = bin;
+        chart.update('none');
+      }
+
+      // toggles
+      card.querySelector('.toggle-price').addEventListener('change', (ev) => {
+        const ds = chart.data.datasets.find(d => d.label.endsWith(' price'));
+        ds.hidden = !ev.target.checked;
+        chart.update('none');
+      });
+      card.querySelector('.toggle-bin').addEventListener('change', (ev) => {
+        const ds = chart.data.datasets.find(d => d.label==='M2bin');
+        ds.hidden = !ev.target.checked;
+        chart.update('none');
+      });
+      card.querySelector('.thr').addEventListener('input', computeBin);
+
+      // initial
+      computeBin();
+    }
+
+    symbols.forEach(makeCard);
+  })();
+  </script>
+</body>
+</html>
