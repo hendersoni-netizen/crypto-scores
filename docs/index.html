@@ -2,12 +2,13 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>Price & Strong Buy score (last {HOURS}h)</title>
+<title>Price & Strong Buy score (last 12h)</title>
 <style>
   body{font-family:-apple-system,Helvetica,Arial,sans-serif;margin:24px}
-  h2{margin:0 0 10px}
+  h2{margin:0 0 6px}
   h3{margin:24px 0 6px}
   #wrap{max-width:1120px;margin:0 auto}
+  .meta{color:#444;margin:0 0 14px}
   .card{margin:18px 0;padding:12px 10px;border:1px solid #eee;border-radius:10px}
   canvas{width:100%;height:420px}
   small{color:#666}
@@ -15,24 +16,36 @@
 </head>
 <body>
   <div id="wrap">
-    <h2>Price & Strong Buy score (last {HOURS} hours)</h2>
-    <small>Left axis: price. Right axis: score (0–100). Hourly labels in your local time; 15-minute ticks. Ends at current slot.</small>
+    <h2>Price & Strong Buy score (last 12 hours)</h2>
+    <div class="meta">
+      Data ends at <b id="endLocal"></b> (<span id="endUtc"></span> UTC).
+      <br/><small>Left axis: price. Right axis: score (0–100). Hourly labels; 15-min ticks. Vertical line marks "Now".</small>
+    </div>
     <div id="charts"></div>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
   <script>
   (function() {
     'use strict';
     const SYMS = ["BTC/USDT", "ETH/USDT", "ONDO/USDT"];
+    const END_ISO = "2025-09-10T16:00:00Z";
     const palette = ['#1f77b4','#ff7f0e','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf'];
 
-    function hourLabelLocal(iso) {
+    // Banner: end time (local & UTC)
+    const end = new Date(END_ISO);
+    document.getElementById('endUtc').textContent = END_ISO.replace('T',' ').replace('Z','Z');
+    document.getElementById('endLocal').textContent = end.toLocaleString();
+
+    function labelForTick(iso, idx, lastIdx) {
       const d = new Date(iso);
-      return (d.getMinutes() === 0) ? String(d.getHours()).padStart(2,'0')+':00' : '';
+      const mm = d.getMinutes();
+      if (idx === lastIdx) return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+      return (mm === 0) ? d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '';
     }
 
-    function makeCard(sym) {
+    function makeCard(sym){
       const card = document.createElement('div');
       card.className = 'card';
       const h = document.createElement('h3');
@@ -47,12 +60,14 @@
 
     fetch('data.json?t=' + Date.now(), {cache:'no-store'})
       .then(r => r.json())
-      .then(({labels, symbols}) => {
+      .then(({labels, symbols, meta}) => {
+        const lastLabel = labels[labels.length-1];
         SYMS.forEach((sym, i) => {
           const ctx = makeCard(sym);
           const s = symbols[sym] || {close: [], score: []};
           const price = s.close || [];
           const score = s.score || [];
+
           new Chart(ctx, {
             type: 'line',
             data: {
@@ -71,11 +86,36 @@
               scales: {
                 x: {
                   type: 'category',
-                  ticks: { autoSkip: false, maxRotation: 0, callback: (v, idx) => hourLabelLocal(labels[idx]) },
+                  ticks: {
+                    autoSkip: false, maxRotation: 0,
+                    callback: (v, idx) => labelForTick(labels[idx], idx, labels.length-1)
+                  },
                   grid: { drawOnChartArea: true, drawTicks: true }
                 },
                 price: { type: 'linear', position: 'left' },
                 score: { type: 'linear', position: 'right', min: 0, max: 100, grid: { drawOnChartArea: false } }
+              },
+              plugins: {
+                annotation: {
+                  annotations: {
+                    nowLine: {
+                      type: 'line',
+                      xMin: lastLabel,
+                      xMax: lastLabel,
+                      borderColor: '#111',
+                      borderWidth: 1.5,
+                      borderDash: [2,2],
+                      label: {
+                        display: true,
+                        content: 'Now',
+                        backgroundColor: 'rgba(17,17,17,0.8)',
+                        color: '#fff',
+                        position: 'start',
+                        yAdjust: -8
+                      }
+                    }
+                  }
+                }
               }
             }
           });
