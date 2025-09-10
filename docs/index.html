@@ -12,6 +12,9 @@
   .card{margin:18px 0;padding:12px 10px;border:1px solid #eee;border-radius:10px}
   canvas{width:100%;height:420px}
   small{color:#666}
+  table{border-collapse:collapse;width:100%;margin-top:8px;font-size:13px}
+  th,td{border:1px solid #eee;padding:6px;text-align:left}
+  th{background:#fafafa}
 </style>
 </head>
 <body>
@@ -30,10 +33,10 @@
   (function() {
     'use strict';
     const SYMS = ["BTC/USDT", "ETH/USDT", "ONDO/USDT"];
-    const END_ISO = "2025-09-10T16:00:00Z";
+    const END_ISO = "2025-09-10T16:45:00Z";
     const palette = ['#1f77b4','#ff7f0e','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf'];
 
-    // Banner: end time (local & UTC)
+    // Banner
     const end = new Date(END_ISO);
     document.getElementById('endUtc').textContent = END_ISO.replace('T',' ').replace('Z','Z');
     document.getElementById('endLocal').textContent = end.toLocaleString();
@@ -52,18 +55,21 @@
       h.textContent = sym;
       const c = document.createElement('canvas');
       c.id = 'c_' + sym.replace(/[^A-Za-z0-9]/g,'_');
+      const t = document.createElement('div');
+      t.id = 'tab_' + sym.replace(/[^A-Za-z0-9]/g,'_');
       card.appendChild(h);
       card.appendChild(c);
+      card.appendChild(t);
       document.getElementById('charts').appendChild(card);
-      return c.getContext('2d');
+      return [c.getContext('2d'), t];
     }
 
     fetch('data.json?t=' + Date.now(), {cache:'no-store'})
       .then(r => r.json())
-      .then(({labels, symbols, meta}) => {
+      .then(({labels, symbols, meta, signals}) => {
         const lastLabel = labels[labels.length-1];
         SYMS.forEach((sym, i) => {
-          const ctx = makeCard(sym);
+          const [ctx, tab] = makeCard(sym);
           const s = symbols[sym] || {close: [], score: []};
           const price = s.close || [];
           const score = s.score || [];
@@ -86,10 +92,8 @@
               scales: {
                 x: {
                   type: 'category',
-                  ticks: {
-                    autoSkip: false, maxRotation: 0,
-                    callback: (v, idx) => labelForTick(labels[idx], idx, labels.length-1)
-                  },
+                  ticks: { autoSkip: false, maxRotation: 0,
+                    callback: (v, idx) => labelForTick(labels[idx], idx, labels.length-1) },
                   grid: { drawOnChartArea: true, drawTicks: true }
                 },
                 price: { type: 'linear', position: 'left' },
@@ -99,26 +103,28 @@
                 annotation: {
                   annotations: {
                     nowLine: {
-                      type: 'line',
-                      xMin: lastLabel,
-                      xMax: lastLabel,
-                      borderColor: '#111',
-                      borderWidth: 1.5,
-                      borderDash: [2,2],
-                      label: {
-                        display: true,
-                        content: 'Now',
-                        backgroundColor: 'rgba(17,17,17,0.8)',
-                        color: '#fff',
-                        position: 'start',
-                        yAdjust: -8
-                      }
+                      type: 'line', xMin: lastLabel, xMax: lastLabel,
+                      borderColor: '#111', borderWidth: 1.5, borderDash: [2,2],
+                      label: { display: true, content: 'Now', backgroundColor: 'rgba(17,17,17,0.8)',
+                               color:'#fff', position:'start', yAdjust:-8 }
                     }
                   }
                 }
               }
             }
           });
+
+          // Signals table
+          const sigs = (signals[sym] || []).slice(-20).reverse(); // latest first, show up to 20
+          if (sigs.length) {
+            let html = '<table><thead><tr><th>Time (local)</th><th>UTC</th><th>Score</th><th>Close</th></tr></thead><tbody>';
+            sigs.forEach(r => {
+              const d = new Date(r.ts);
+              html += `<tr><td>${d.toLocaleString()}</td><td>${r.ts}</td><td>${r.score}</td><td>${r.close}</td></tr>`;
+            });
+            html += '</tbody></table>';
+            tab.innerHTML = html;
+          }
         });
       })
       .catch(e => console.error(e));
