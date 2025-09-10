@@ -1,246 +1,60 @@
-<!doctype html><html><head><meta charset="utf-8"><title>Buy Scores</title>
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>BTC Close (last 12h)</title>
 <style>
-body{font-family:-apple-system,Helvetica,Arial,sans-serif;margin:20px}
-h2{margin:0 0 8px}
-.status{display:flex;gap:16px;align-items:center;margin:8px 0 14px;flex-wrap:wrap}
-.dot{width:10px;height:10px;border-radius:50%;background:#ef4444;box-shadow:0 0 6px #ef4444}
-.kv span{font-weight:600}
-table{border-collapse:collapse;width:100%;margin-top:16px}
-th,td{border:1px solid #ddd;padding:6px;text-align:right}
-th{text-align:center;background:#f5f5f5}
-.container{max-width:1100px;margin:0 auto}
-canvas{width:100%;height:420px}
-.note{color:#666;font-size:12px;margin-top:6px}
-</style></head><body>
-<div class="container">
-  <h2>Buy Scores (latest per symbol)</h2>
-  <div class="status">
-    <div id="statusDot" class="dot"></div>
-    <div class="kv">Last run (UTC): <span id="lastRun">2025-09-10T09:09:27Z</span></div>
-    <div class="kv"><small>Uptime since last run:</small> <span id="uptime">—</span></div>
-    <div class="kv"><small>Next run in (~every 15 min):</small> <span id="countdown">—</span></div>
+  body{font-family:-apple-system,Helvetica,Arial,sans-serif;margin:24px}
+  h2{margin:0 0 12px}
+  #wrap{max-width:1100px;margin:0 auto}
+  canvas{width:100%;height:440px}
+  small{color:#666}
+</style>
+</head>
+<body>
+  <div id="wrap">
+    <h2>BTC/USDT — Close (last 12 hours)</h2>
+    <small>Data updates when you run the script.</small>
+    <canvas id="c"></canvas>
   </div>
-  <div style="margin:12px 0">
-    <canvas id="scoreChart"></canvas>
-    <div class="note">X axis: left = 12 hours ago, right = now.</div>
-  </div>
-  <div id="tableWrap"><table border="1" class="dataframe">
-  <thead>
-    <tr style="text-align: right;">
-      <th>symbol</th>
-      <th>timestamp_utc</th>
-      <th>score</th>
-      <th>close</th>
-      <th>ema20</th>
-      <th>ema50</th>
-      <th>rsi</th>
-      <th>macd</th>
-      <th>macd_signal</th>
-      <th>macd_hist</th>
-      <th>bb_low</th>
-      <th>bb_mid</th>
-      <th>bb_high</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td>BTC/USDT</td>
-      <td>2025-09-10T09:09:23Z</td>
-      <td>50</td>
-      <td>112187.380000</td>
-      <td>112068.259024</td>
-      <td>111804.933652</td>
-      <td>56.575808</td>
-      <td>270.515256</td>
-      <td>238.979043</td>
-      <td>31.536213</td>
-      <td>111122.446475</td>
-      <td>111974.990500</td>
-      <td>112827.534525</td>
-    </tr>
-    <tr>
-      <td>ETH/USDT</td>
-      <td>2025-09-10T09:09:23Z</td>
-      <td>50</td>
-      <td>4316.440000</td>
-      <td>4320.614547</td>
-      <td>4315.894791</td>
-      <td>48.501788</td>
-      <td>4.624734</td>
-      <td>4.266838</td>
-      <td>0.357895</td>
-      <td>4299.949047</td>
-      <td>4318.528500</td>
-      <td>4337.107953</td>
-    </tr>
-    <tr>
-      <td>ONDO/USDT</td>
-      <td>2025-09-10T09:09:23Z</td>
-      <td>25</td>
-      <td>1.013300</td>
-      <td>1.012649</td>
-      <td>1.001495</td>
-      <td>51.943528</td>
-      <td>0.002503</td>
-      <td>0.003728</td>
-      <td>-0.001225</td>
-      <td>1.001208</td>
-      <td>1.012575</td>
-      <td>1.023942</td>
-    </tr>
-  </tbody>
-</table></div>
-</div>
 
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
-<script>
-(function(){
-'use strict';
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script>
+  (function(){
+    'use strict';
+    // super simple: fetch JSON and plot; category x-axis (no date adapter needed)
+    fetch('btc.json?t=' + Date.now(), {cache:'no-store'})
+      .then(function(r){ return r.json(); })
+      .then(function(rows){
+        var labels = rows.map(function(p){ return p.t; });
+        var data   = rows.map(function(p){ return p.close; });
 
-try { console.log('booting scores UI'); } catch(e) {}
-
-var LOOKBACK_HOURS = 12;
-var UI_INTERVAL_MINUTES = 15;
-var FRESH_MS = 10*60*1000;
-
-var statusDot=document.getElementById('statusDot');
-var lastRunEl=document.getElementById('lastRun');
-var uptimeEl=document.getElementById('uptime');
-var countdownEl=document.getElementById('countdown');
-
-var ctx=document.getElementById('scoreChart').getContext('2d');
-var chart=new Chart(ctx,{type:'line',data:{labels:[],datasets:[]},
-  options:{responsive:true,interaction:{mode:'nearest',intersect:false},
-    plugins:{legend:{position:'top'},title:{display:true,text:'Strong Buy Score (0-100) - last '+LOOKBACK_HOURS+' hours'}},
-    scales:{x:{type:'time',time:{tooltipFormat:'HH:mm',displayFormats:{minute:'HH:mm'}},ticks:{autoSkip:true,maxTicksLimit:25}},
-            y:{min:0,max:100,ticks:{stepSize:20}}}});
-
-function parseCSV(t){
-  var lines=t.replace(/\r/g,'').trim().split('\n'); if(!lines.length) return [];
-  var headers=lines.shift().split(',');
-  var out=[], i, j, cols, obj;
-  for(i=0;i<lines.length;i++){
-    cols=lines[i].split(',');
-    obj={};
-    for(j=0;j<headers.length;j++){ obj[headers[j]]=cols[j]; }
-    out.push(obj);
-  }
-  return out;
-}
-
-function fmt(ms){
-  if(!(ms>=0)) return '—';
-  var s=Math.floor(ms/1000);
-  var h=('0'+Math.floor(s/3600)).slice(-2);
-  var m=('0'+Math.floor((s%3600)/60)).slice(-2);
-  var x=('0'+Math.floor(s%60)).slice(-2);
-  return h+':'+m+':'+x;
-}
-
-function floor15(d){ var step=900000; return new Date(Math.floor(d.getTime()/step)*step); }
-function nextCountdown(){ var step=900000; var n=new Date(Math.ceil(Date.now()/step)*step); return n-Date.now(); }
-
-function buildTimeline(lastMs,hours){
-  var end=new Date(lastMs), start=new Date(end.getTime()-hours*3600000);
-  var out=[], step=900000, t;
-  for(t=floor15(start); t<=floor15(end); t=new Date(t.getTime()+step)){ out.push(new Date(t).toISOString()); }
-  return out;
-}
-
-function seriesFromRows(rows,timeline){
-  var bySym={}, seen={}, i, s;
-  for(i=0;i<rows.length;i++){ seen[rows[i].symbol]=true; }
-  for(s in seen){ if(seen.hasOwnProperty(s)){ bySym[s]=[]; for(i=0;i<timeline.length;i++) bySym[s].push(null); } }
-
-  var idx={}; for(i=0;i<timeline.length;i++){ idx[timeline[i]]=i; }
-
-  rows.sort(function(a,b){ return Date.parse(a.timestamp_utc)-Date.parse(b.timestamp_utc); });
-
-  rows.forEach(function(r){
-    var t=Date.parse(r.timestamp_utc);
-    if(!(t>0)) return;
-    var bucket=floor15(new Date(t)).toISOString();
-    var k=idx[bucket]; if(k===undefined) return;
-    var v=parseInt(r.score,10);
-    if(v>=0) bySym[r.symbol][k]=v;
-  });
-  return bySym;
-}
-
-function renderTable(latest){
-  var cols=["timestamp_utc","symbol","score","close","ema20","ema50","rsi","macd","macd_signal","macd_hist","bb_low","bb_mid","bb_high"];
-  var html='<table><thead><tr>';
-  for(var i=0;i<cols.length;i++){ html+='<th>'+cols[i]+'</th>'; }
-  html+='</tr></thead><tbody>';
-  latest.forEach(function(r){
-    html+='<tr>';
-    for(var i=0;i<cols.length;i++){ var c=cols[i]; html+='<td>'+(r[c]||'')+'</td>'; }
-    html+='</tr>';
-  });
-  html+='</tbody></table>';
-  document.getElementById('tableWrap').innerHTML=html;
-}
-
-function loadAndUpdate(){
-  fetch('buy_scores.csv?t='+(Date.now()),{cache:'no-store'})
-  .then(function(res){ if(!res.ok) throw new Error('HTTP '+res.status); return res.text(); })
-  .then(function(text){
-    var rows=parseCSV(text);
-    if(!rows.length) return;
-
-    var times=rows.map(function(r){ return Date.parse(r.timestamp_utc); }).filter(function(n){ return n>0; });
-    if(!times.length) throw new Error('no parseable timestamps');
-    var lastMs=Math.max.apply(null,times);
-    lastRunEl.textContent=new Date(lastMs).toISOString();
-
-    var ms=Date.now()-lastMs;
-    var fresh=ms<FRESH_MS;
-    statusDot.style.background=fresh?'#22c55e':'#ef4444';
-    statusDot.style.boxShadow=fresh?'0 0 6px #22c55e':'0 0 6px #ef4444';
-    uptimeEl.textContent=fmt(ms);
-    countdownEl.textContent=fmt(nextCountdown());
-
-    var latestMap={}, ordered=[];
-    rows.slice().sort(function(a,b){ return Date.parse(b.timestamp_utc)-Date.parse(a.timestamp_utc); })
-      .forEach(function(r){ if(!latestMap[r.symbol]){ latestMap[r.symbol]=r; ordered.push(r); }});
-    renderTable(ordered);
-
-    var tl=buildTimeline(lastMs, LOOKBACK_HOURS);
-    var series=seriesFromRows(rows, tl);
-    chart.data.labels=tl;
-
-    var palette=["#1f77b4","#ff7f0e","#2ca02c","#d62728","#9467bd","#8c564b","#e377c2","#7f7f7f","#bcbd22","#17becf"];
-    var ds=[], idx=0, sym;
-    for(sym in series){
-      if(!series.hasOwnProperty(sym)) continue;
-      ds.push({
-        label:sym,
-        data:series[sym],
-        borderColor:palette[idx%palette.length],
-        backgroundColor:palette[idx%palette.length],
-        spanGaps:true,
-        tension:0.25,
-        pointRadius:3,
-        pointHoverRadius:5
-      });
-      idx++;
-    }
-    chart.data.datasets=ds;
-    chart.update('none');
-  })
-  .catch(function(e){ try{ console.error('load error', e); }catch(_e){} });
-}
-
-loadAndUpdate();
-setInterval(function(){
-  var s=Date.parse((lastRunEl.textContent||'').trim());
-  if(s>0){
-    var ms=Date.now()-s;
-    uptimeEl.textContent=fmt(ms);
-    countdownEl.textContent=fmt(nextCountdown());
-  }
-},1000);
-setInterval(loadAndUpdate,30000);
-
-})();</script></body></html>
+        var ctx = document.getElementById('c').getContext('2d');
+        new Chart(ctx, {
+          type: 'line',
+          data: {
+            labels: labels,
+            datasets: [{
+              label: 'BTC/USDT close',
+              data: data,
+              borderColor: '#1f77b4',
+              backgroundColor: '#1f77b4',
+              pointRadius: 0,
+              tension: 0.25,
+              spanGaps: true
+            }]
+          },
+          options: {
+            responsive: true,
+            scales: {
+              x: {ticks: {maxTicksLimit: 25}},   // keep it readable
+              y: {beginAtZero: false}
+            }
+          }
+        });
+      })
+      .catch(function(e){ console.error(e); });
+  })();
+  </script>
+</body>
+</html>
