@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>Crypto — Price & Strong Buy score (last 12h)</title>
+<title>Price & Strong Buy score (last {HOURS}h)</title>
 <style>
   body{font-family:-apple-system,Helvetica,Arial,sans-serif;margin:24px}
   h2{margin:0 0 10px}
@@ -15,24 +15,24 @@
 </head>
 <body>
   <div id="wrap">
-    <h2>Price & Strong Buy score (last 12 hours)</h2>
-    <small>Left axis: price. Right axis: score (0–100). Hourly labels, 15-minute ticks.</small>
+    <h2>Price & Strong Buy score (last {HOURS} hours)</h2>
+    <small>Left axis: price. Right axis: score (0–100). Hourly labels in your local time; 15-minute ticks. Ends at current slot.</small>
     <div id="charts"></div>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script>
-  (function(){
+  (function() {
     'use strict';
     const SYMS = ["BTC/USDT", "ETH/USDT", "ONDO/USDT"];
     const palette = ['#1f77b4','#ff7f0e','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf'];
 
-    function hourLabel(iso){
-      const hh = iso.substring(11,13), mm = iso.substring(14,16);
-      return (mm === '00') ? (hh + ':00') : '';
+    function hourLabelLocal(iso) {
+      const d = new Date(iso);
+      return (d.getMinutes() === 0) ? String(d.getHours()).padStart(2,'0')+':00' : '';
     }
 
-    function makeCard(sym){
+    function makeCard(sym) {
       const card = document.createElement('div');
       card.className = 'card';
       const h = document.createElement('h3');
@@ -58,55 +58,30 @@
             data: {
               labels: labels,
               datasets: [
-                {
-                  label: sym + ' price',
-                  yAxisID: 'price',
-                  data: price,
-                  borderColor: palette[i % palette.length],
-                  backgroundColor: palette[i % palette.length],
-                  pointRadius: 0,
-                  tension: 0.25,
-                  spanGaps: true
-                },
-                {
-                  label: sym + ' score',
-                  yAxisID: 'score',
-                  data: score,
-                  borderColor: '#d62728',
-                  backgroundColor: '#d62728',
-                  borderDash: [6,4],
-                  pointRadius: 0,
-                  tension: 0.25,
-                  spanGaps: true
-                }
+                { label: sym + ' price', yAxisID: 'price', data: price,
+                   borderColor: palette[i % palette.length], backgroundColor: palette[i % palette.length],
+                   pointRadius: 0, tension: 0.25, spanGaps: true },
+                { label: sym + ' score', yAxisID: 'score', data: score,
+                   borderColor: '#d62728', backgroundColor: '#d62728',
+                   borderDash: [6,4], pointRadius: 0, tension: 0.25, spanGaps: true }
               ]
             },
             options: {
-              responsive: true,
-              animation: false,
-              interaction: {mode: 'nearest', intersect: false},
+              responsive: true, animation: false, interaction: {mode: 'nearest', intersect: false},
               scales: {
                 x: {
                   type: 'category',
-                  ticks: {
-                    autoSkip: false,
-                    maxRotation: 0,
-                    callback: (val, idx) => hourLabel(labels[idx])
-                  },
+                  ticks: { autoSkip: false, maxRotation: 0, callback: (v, idx) => hourLabelLocal(labels[idx]) },
                   grid: { drawOnChartArea: true, drawTicks: true }
                 },
                 price: { type: 'linear', position: 'left' },
-                score: {
-                  type: 'linear', position: 'right', min: 0, max: 100,
-                  grid: { drawOnChartArea: false }
-                }
+                score: { type: 'linear', position: 'right', min: 0, max: 100, grid: { drawOnChartArea: false } }
               }
             }
           });
         });
       })
       .catch(e => console.error(e));
-  } )();
-  </script>
+  })();</script>
 </body>
 </html>
