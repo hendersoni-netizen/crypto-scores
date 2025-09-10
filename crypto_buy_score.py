@@ -1,15 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""
-crypto_buy_score.py
-- Fetches 15m OHLCV (Binance via ccxt)
-- Calculates indicators & a simple buy score
-- Appends one row per symbol to docs/buy_scores.csv
-- Rebuilds docs/index.html with a 12-hour chart (15-min buckets)
-- Commits & pushes docs/ to GitHub Pages
-"""
-
 import time
 import subprocess
 from datetime import datetime, timezone
@@ -19,12 +10,8 @@ import ccxt
 import numpy as np
 import pandas as pd
 
-# -----------------------------
-# CONFIG
-# -----------------------------
 EXCHANGE_ID = "binance"
 SYMBOLS = ["BTC/USDT", "ETH/USDT", "ONDO/USDT"]
-
 TIMEFRAME = "15m"
 LOOKBACK_HOURS = 12
 UI_INTERVAL_MINUTES = 15
@@ -45,9 +32,6 @@ def iso_utc(dt: datetime) -> str:
 def iso_utc_now() -> str:
     return iso_utc(datetime.now(timezone.utc))
 
-# -----------------------------
-# Indicators
-# -----------------------------
 def ema(s: pd.Series, p: int) -> pd.Series:
     return s.ewm(span=p, adjust=False).mean()
 
@@ -71,9 +55,6 @@ def bollinger(s: pd.Series, n: int = 20, k: float = 2.0):
     std = s.rolling(n).std(ddof=0)
     return mid - k*std, mid, mid + k*std
 
-# -----------------------------
-# Data + score
-# -----------------------------
 def fetch_df(sym: str, timeframe: str, hours: int) -> pd.DataFrame:
     limit = int(hours*60/15) + 50
     o = exchange.fetch_ohlcv(sym, timeframe=timeframe, limit=limit)
@@ -92,23 +73,25 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
 def score_row(r: pd.Series) -> int:
     s = 0
-    if r["ema20"] > r["ema50"]: s += W_EMA
-    if r["close"] <= r["bb_low"]: s += W_BB
-    if r["rsi"] < 35: s += W_RSI
-    if r["macd"] > r["macd_signal"] and r["macd_hist"] > 0: s += W_MACD
+    if r["ema20"] > r["ema50"]:
+        s += W_EMA
+    if r["close"] <= r["bb_low"]:
+        s += W_BB
+    if r["rsi"] < 35:
+        s += W_RSI
+    if r["macd"] > r["macd_signal"] and r["macd_hist"] > 0:
+        s += W_MACD
     return int(s)
 
-# -----------------------------
-# Output
-# -----------------------------
-def log_to_csv(records: list[dict]):
-    if not records: return
+def log_to_csv(records):
+    if not records:
+        return
     df = pd.DataFrame.from_records(records)
     CSV_PATH.parent.mkdir(parents=True, exist_ok=True)
     header = not CSV_PATH.exists()
     df.to_csv(CSV_PATH, mode="a", index=False, header=header)
 
-def _last_run_iso() -> str:
+def _last_run_iso():
     try:
         if CSV_PATH.exists():
             df = pd.read_csv(CSV_PATH, usecols=["timestamp_utc"])
@@ -133,7 +116,6 @@ def write_html_from_csv():
 
     last_run_iso = _last_run_iso()
 
-    # Keep the JS very ES5-friendly to avoid parser quirks
     html = """<!doctype html><html><head><meta charset="utf-8"><title>Buy Scores</title>
 <style>
 body{font-family:-apple-system,Helvetica,Arial,sans-serif;margin:20px}
@@ -169,6 +151,8 @@ canvas{width:100%;height:420px}
 (function(){
 'use strict';
 
+try { console.log('booting scores UI'); } catch(e) {}
+
 var LOOKBACK_HOURS = __LOOKBACK__;
 var UI_INTERVAL_MINUTES = __UI_INTERVAL__;
 var FRESH_MS = 10*60*1000;
@@ -181,7 +165,7 @@ var countdownEl=document.getElementById('countdown');
 var ctx=document.getElementById('scoreChart').getContext('2d');
 var chart=new Chart(ctx,{type:'line',data:{labels:[],datasets:[]},
   options:{responsive:true,interaction:{mode:'nearest',intersect:false},
-    plugins:{legend:{position:'top'},title:{display:true,text:'Strong Buy Score (0–100) — last '+LOOKBACK_HOURS+' hours'}},
+    plugins:{legend:{position:'top'},title:{display:true,text:'Strong Buy Score (0-100) - last '+LOOKBACK_HOURS+' hours'}},
     scales:{x:{type:'time',time:{tooltipFormat:'HH:mm',displayFormats:{minute:'HH:mm'}},ticks:{autoSkip:true,maxTicksLimit:25}},
             y:{min:0,max:100,ticks:{stepSize:20}}}});
 
@@ -218,20 +202,19 @@ function buildTimeline(lastMs,hours){
 }
 
 function seriesFromRows(rows,timeline){
-  var bySym={}, syms={}, i, s;
-  for(i=0;i<rows.length;i++){ syms[rows[i].symbol]=true; }
-  for(s in syms){ if(syms.hasOwnProperty(s)) bySym[s]=new Array(timeline.length).fill(null); }
+  var bySym={}, seen={}, i, s;
+  for(i=0;i<rows.length;i++){ seen[rows[i].symbol]=true; }
+  for(s in seen){ if(seen.hasOwnProperty(s)){ bySym[s]=[]; for(i=0;i<timeline.length;i++) bySym[s].push(null); } }
 
-  var idx=new Map(timeline.map(function(t,i){ return [t,i]; }));
+  var idx={}; for(i=0;i<timeline.length;i++){ idx[timeline[i]]=i; }
 
   rows.sort(function(a,b){ return Date.parse(a.timestamp_utc)-Date.parse(b.timestamp_utc); });
 
   rows.forEach(function(r){
     var t=Date.parse(r.timestamp_utc);
     if(!(t>0)) return;
-    var b=floor15(new Date(t)).toISOString();
-    var k=idx.get(b);
-    if(k===undefined) return;
+    var bucket=floor15(new Date(t)).toISOString();
+    var k=idx[bucket]; if(k===undefined) return;
     var v=parseInt(r.score,10);
     if(v>=0) bySym[r.symbol][k]=v;
   });
@@ -240,14 +223,20 @@ function seriesFromRows(rows,timeline){
 
 function renderTable(latest){
   var cols=["timestamp_utc","symbol","score","close","ema20","ema50","rsi","macd","macd_signal","macd_hist","bb_low","bb_mid","bb_high"];
-  var html='<table><thead><tr>'+cols.map(function(c){return '<th>'+c+'</th>';}).join('')+'</tr></thead><tbody>';
-  latest.forEach(function(r){ html+='<tr>'+cols.map(function(c){return '<td>'+(r[c]||'')+'</td>';}).join('')+'</tr>'; });
+  var html='<table><thead><tr>';
+  for(var i=0;i<cols.length;i++){ html+='<th>'+cols[i]+'</th>'; }
+  html+='</tr></thead><tbody>';
+  latest.forEach(function(r){
+    html+='<tr>';
+    for(var i=0;i<cols.length;i++){ var c=cols[i]; html+='<td>'+(r[c]||'')+'</td>'; }
+    html+='</tr>';
+  });
   html+='</tbody></table>';
   document.getElementById('tableWrap').innerHTML=html;
 }
 
 function loadAndUpdate(){
-  fetch('buy_scores.csv?t='+Date.now(),{cache:'no-store'})
+  fetch('buy_scores.csv?t='+(Date.now()),{cache:'no-store'})
   .then(function(res){ if(!res.ok) throw new Error('HTTP '+res.status); return res.text(); })
   .then(function(text){
     var rows=parseCSV(text);
@@ -265,35 +254,35 @@ function loadAndUpdate(){
     uptimeEl.textContent=fmt(ms);
     countdownEl.textContent=fmt(nextCountdown());
 
-    var latestMap=new Map();
-    rows.slice().sort(function(a,b){return Date.parse(b.timestamp_utc)-Date.parse(a.timestamp_utc);})
-        .forEach(function(r){ if(!latestMap.has(r.symbol)) latestMap.set(r.symbol,r); });
-    renderTable(Array.from(latestMap.values()));
+    var latestMap={}, ordered=[];
+    rows.slice().sort(function(a,b){ return Date.parse(b.timestamp_utc)-Date.parse(a.timestamp_utc); })
+      .forEach(function(r){ if(!latestMap[r.symbol]){ latestMap[r.symbol]=r; ordered.push(r); }});
+    renderTable(ordered);
 
     var tl=buildTimeline(lastMs, LOOKBACK_HOURS);
     var series=seriesFromRows(rows, tl);
     chart.data.labels=tl;
 
     var palette=["#1f77b4","#ff7f0e","#2ca02c","#d62728","#9467bd","#8c564b","#e377c2","#7f7f7f","#bcbd22","#17becf"];
-    var ds=[], i=0, sym;
+    var ds=[], idx=0, sym;
     for(sym in series){
       if(!series.hasOwnProperty(sym)) continue;
       ds.push({
         label:sym,
         data:series[sym],
-        borderColor:palette[i%palette.length],
-        backgroundColor:palette[i%palette.length],
+        borderColor:palette[idx%palette.length],
+        backgroundColor:palette[idx%palette.length],
         spanGaps:true,
         tension:0.25,
         pointRadius:3,
         pointHoverRadius:5
       });
-      i++;
+      idx++;
     }
     chart.data.datasets=ds;
     chart.update('none');
   })
-  .catch(function(e){ console.error(e); });
+  .catch(function(e){ try{ console.error('load error', e); }catch(_e){} });
 }
 
 loadAndUpdate();
@@ -327,7 +316,7 @@ def git_push():
 
 def run_once():
     now = iso_utc_now()
-    rows: list[dict] = []
+    rows = []
     for sym in SYMBOLS:
         try:
             df = fetch_df(sym, TIMEFRAME, LOOKBACK_HOURS)
