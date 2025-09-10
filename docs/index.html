@@ -2,80 +2,111 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>BTC Close + Strong Buy Score (last 12h)</title>
+<title>Crypto — Price & Strong Buy score (last 12h)</title>
 <style>
   body{font-family:-apple-system,Helvetica,Arial,sans-serif;margin:24px}
-  h2{margin:0 0 12px}
-  #wrap{max-width:1100px;margin:0 auto}
-  canvas{width:100%;height:440px}
+  h2{margin:0 0 10px}
+  h3{margin:24px 0 6px}
+  #wrap{max-width:1120px;margin:0 auto}
+  .card{margin:18px 0;padding:12px 10px;border:1px solid #eee;border-radius:10px}
+  canvas{width:100%;height:420px}
   small{color:#666}
 </style>
 </head>
 <body>
   <div id="wrap">
-    <h2>BTC/USDT — Price and Strong Buy score (last 12 hours)</h2>
-    <small>Left axis: price. Right axis: Strong Buy score (0–100).</small>
-    <canvas id="c"></canvas>
+    <h2>Price & Strong Buy score (last 12 hours)</h2>
+    <small>Left axis: price. Right axis: score (0–100). Hourly labels, 15-minute ticks.</small>
+    <div id="charts"></div>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script>
   (function(){
     'use strict';
-    fetch('btc.json?t=' + Date.now(), {cache:'no-store'})
-      .then(function(r){ return r.json(); })
-      .then(function(rows){
-        var labels = rows.map(function(p){ return p.t; });
-        var price  = rows.map(function(p){ return p.close; });
-        var score  = rows.map(function(p){ return p.score; });
+    const SYMS = ["BTC/USDT", "ETH/USDT", "ONDO/USDT"];
+    const palette = ['#1f77b4','#ff7f0e','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf'];
 
-        var ctx = document.getElementById('c').getContext('2d');
-        new Chart(ctx, {
-          type: 'line',
-          data: {
-            labels: labels,
-            datasets: [{
-              label: 'BTC/USDT close',
-              yAxisID: 'price',
-              data: price,
-              borderColor: '#1f77b4',
-              backgroundColor: '#1f77b4',
-              pointRadius: 0,
-              tension: 0.25,
-              spanGaps: true
-            },{
-              label: 'Strong Buy score',
-              yAxisID: 'score',
-              data: score,
-              borderColor: '#d62728',
-              backgroundColor: '#d62728',
-              pointRadius: 0,
-              tension: 0.25,
-              spanGaps: true
-            }]
-          },
-          options: {
-            responsive: true,
-            scales: {
-              x: { ticks: { maxTicksLimit: 25 } },
-              price: {
-                type: 'linear',
-                position: 'left'
-              },
-              score: {
-                type: 'linear',
-                position: 'right',
-                min: 0,
-                max: 100,
-                grid: { drawOnChartArea: false }  // keep grid tidy
-              }
+    function hourLabel(iso){
+      const hh = iso.substring(11,13), mm = iso.substring(14,16);
+      return (mm === '00') ? (hh + ':00') : '';
+    }
+
+    function makeCard(sym){
+      const card = document.createElement('div');
+      card.className = 'card';
+      const h = document.createElement('h3');
+      h.textContent = sym;
+      const c = document.createElement('canvas');
+      c.id = 'c_' + sym.replace(/[^A-Za-z0-9]/g,'_');
+      card.appendChild(h);
+      card.appendChild(c);
+      document.getElementById('charts').appendChild(card);
+      return c.getContext('2d');
+    }
+
+    fetch('data.json?t=' + Date.now(), {cache:'no-store'})
+      .then(r => r.json())
+      .then(({labels, symbols}) => {
+        SYMS.forEach((sym, i) => {
+          const ctx = makeCard(sym);
+          const s = symbols[sym] || {close: [], score: []};
+          const price = s.close || [];
+          const score = s.score || [];
+          new Chart(ctx, {
+            type: 'line',
+            data: {
+              labels: labels,
+              datasets: [
+                {
+                  label: sym + ' price',
+                  yAxisID: 'price',
+                  data: price,
+                  borderColor: palette[i % palette.length],
+                  backgroundColor: palette[i % palette.length],
+                  pointRadius: 0,
+                  tension: 0.25,
+                  spanGaps: true
+                },
+                {
+                  label: sym + ' score',
+                  yAxisID: 'score',
+                  data: score,
+                  borderColor: '#d62728',
+                  backgroundColor: '#d62728',
+                  borderDash: [6,4],
+                  pointRadius: 0,
+                  tension: 0.25,
+                  spanGaps: true
+                }
+              ]
             },
-            interaction: { mode: 'nearest', intersect: false }
-          }
+            options: {
+              responsive: true,
+              animation: false,
+              interaction: {mode: 'nearest', intersect: false},
+              scales: {
+                x: {
+                  type: 'category',
+                  ticks: {
+                    autoSkip: false,
+                    maxRotation: 0,
+                    callback: (val, idx) => hourLabel(labels[idx])
+                  },
+                  grid: { drawOnChartArea: true, drawTicks: true }
+                },
+                price: { type: 'linear', position: 'left' },
+                score: {
+                  type: 'linear', position: 'right', min: 0, max: 100,
+                  grid: { drawOnChartArea: false }
+                }
+              }
+            }
+          });
         });
       })
-      .catch(function(e){ console.error(e); });
-  })();
+      .catch(e => console.error(e));
+  } )();
   </script>
 </body>
 </html>
