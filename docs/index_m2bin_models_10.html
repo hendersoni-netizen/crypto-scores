@@ -1,0 +1,201 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Models M1–M10 + M2bin (probe)</title>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net"/>
+  <style>
+    :root { --fg:#111; --muted:#666; --line:#e5e7eb; --card:#fff; --bg:#f8fafc; }
+    *{box-sizing:border-box}
+    body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,Helvetica,Arial,sans-serif;margin:0;background:var(--bg);color:var(--fg)}
+    header{position:sticky;top:0;background:#fff;z-index:1;border-bottom:1px solid var(--line);padding:10px 16px}
+    h1{font-size:18px;margin:0 0 6px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    small{color:var(--muted)}
+    .wrap{max-width:1080px;margin:16px auto;padding:0 12px 24px}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 2px rgba(0,0,0,.03);padding:12px 12px 8px;margin:12px 0}
+    .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:6px 0 8px}
+    .row label{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#222;border:1px solid var(--line);padding:4px 8px;border-radius:20px;background:#fff}
+    .row .sp{flex:1}
+    .num{width:60px;text-align:right;border:1px solid var(--line);border-radius:8px;padding:4px 6px}
+    canvas{width:100%;height:360px}
+    .muted{color:var(--muted);font-size:12px;margin:4px 0 0}
+    .badge{display:inline-block;padding:2px 6px;border-radius:8px;border:1px solid var(--line);font-size:11px;color:var(--muted)}
+    .legend{display:flex;gap:8px;flex-wrap:wrap}
+    .legend .sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px}
+    .note{font-size:12px;color:var(--muted);margin-top:4px}
+  </style>
+</head>
+<body>
+<header>
+  <h1>Price & Model scores — <span class="badge">M1–M10 + M2bin</span></h1>
+  <small id="metaLine">Left axis: price. Right axis: score (0–100). Hourly x‑labels; 15-min ticks.</small>
+</header>
+
+<div class="wrap">
+  <div id="charts"></div>
+  <p class="note">Tip: toggle lines via the chips; adjust the <b>M2 threshold</b> to generate the binary (0/100) line.</p>
+</div>
+
+<!-- Chart.js + date adapter (critical) -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+<script>
+(async function() {
+  const MODELS = Array.from({length:10}, (_,i)=>'M'+(i+1)); // M1..M10
+  const palette = [
+    '#2563eb','#16a34a','#f59e0b','#dc2626','#7c3aed',
+    '#059669','#ea580c','#0ea5e9','#a855f7','#22c55e'
+  ];
+
+  function el(tag, attrs={}, ...kids){
+    const x = document.createElement(tag);
+    for (const [k,v] of Object.entries(attrs)) {
+      if (k==='class') x.className=v;
+      else if (k==='style') x.style.cssText=v;
+      else x.setAttribute(k,v);
+    }
+    for (const k of kids) x.append(k);
+    return x;
+  }
+
+  function toDates(lbls){ return lbls.map(t => new Date(t)); }
+
+  function computeBin(series, thr){
+    if (!Array.isArray(series)) return [];
+    const t = Number(thr)||0;
+    return series.map(v => (v==null || isNaN(v)) ? null : (v >= t ? 100 : 0));
+  }
+
+  // Read JSON (same folder as this page -> docs/)
+  const res = await fetch('data.json?t=' + Date.now(), {cache:'no-store'});
+  if (!res.ok){ document.body.append('Failed to load data.json'); return; }
+  const data = await res.json();
+  const labels = (data.labels||[]);
+  const when = data.meta?.last_updated || labels[labels.length-1] || '';
+
+  const metaLine = document.getElementById('metaLine');
+  metaLine.textContent = `Left axis: price. Right axis: score (0–100). Last updated (UTC): ${when}`;
+
+  const root = document.getElementById('charts');
+  const dates = toDates(labels);
+  const syms = Object.keys(data.symbols||{});
+
+  syms.forEach((sym, si) => {
+    const s = data.symbols[sym] || {};
+    const card = el('div', {class:'card'});
+    const title = el('div', {class:'row'},
+      el('strong', {}, sym),
+      el('span', {class:'sp'}),
+      el('label', {}, el('input',{type:'checkbox','data-k':'price',checked:true}), 'price'),
+      ...MODELS.map((m,mi)=>{
+        const present = Array.isArray(s[m]);
+        const lab = el('label', {}, el('input', {type:'checkbox','data-k':m, checked: present? (m==='M2'): false, disabled: present? false : true }), m);
+        if (!present){ lab.style.opacity='0.4'; }
+        return lab;
+      }),
+      el('label', {}, 'M2 threshold:', el('input',{type:'number', class:'num', min:'0', max:'100','data-role':'thr', value: '50'})),
+      el('label', {}, el('input',{type:'checkbox','data-k':'M2bin',checked:true}), 'M2bin')
+    );
+    card.append(title);
+
+    const c = el('canvas');
+    card.append(c);
+    card.append(el('div',{class:'muted'}, 'Toggle lines above. M2bin is a dashed line derived from M2 >= threshold (mapped to 0/100).'));
+
+    root.append(card);
+
+    // Prepare datasets
+    const price = Array.isArray(s.close) ? s.close.slice() : [];
+    const ds = [];
+
+    // price (left axis)
+    ds.push({
+      label: sym + ' price',
+      yAxisID: 'price',
+      data: price,
+      borderColor: '#0f172a',
+      backgroundColor: '#0f172a',
+      tension: 0.25,
+      pointRadius: 0,
+      spanGaps: true
+    });
+
+    // M1..M10 (right axis)
+    MODELS.forEach((m,mi)=>{
+      const arr = Array.isArray(s[m]) ? s[m].slice() : null;
+      if (!arr) return;
+      ds.push({
+        label: m,
+        yAxisID: 'score',
+        data: arr,
+        borderColor: palette[mi % palette.length],
+        backgroundColor: palette[mi % palette.length],
+        pointRadius: 0,
+        tension: 0.2,
+        spanGaps: true
+      });
+    });
+
+    // M2bin derived (added later after reading threshold)
+    ds.push({
+      label: 'M2bin',
+      yAxisID: 'score',
+      data: [],
+      borderColor: '#111',
+      backgroundColor: '#111',
+      pointRadius: 0,
+      borderDash: [6,4],
+      tension: 0,
+      spanGaps: true
+    });
+
+    // Build chart
+    const chart = new Chart(c.getContext('2d'), {
+      type: 'line',
+      data: { labels: dates, datasets: ds },
+      options: {
+        responsive: true,
+        interaction: { mode: 'nearest', intersect: false },
+        maintainAspectRatio: false,
+        scales: {
+          x: {
+            type: 'time',
+            time: { tooltipFormat: 'MMM dd HH:mm', displayFormats: { minute: 'HH:mm', hour: 'HH:mm' } },
+            ticks: { autoSkip: true, maxTicksLimit: 20 }
+          },
+          price: { position: 'left', grid: { drawOnChartArea: true }},
+          score: { position: 'right', min:0, max:100, grid: { drawOnChartArea: false } }
+        },
+        plugins: {
+          legend: { display: false }
+        }
+      }
+    });
+
+    // Wire up controls
+    const inputs = title.querySelectorAll('input[type="checkbox"][data-k]');
+    inputs.forEach(inp => {
+      inp.addEventListener('change', () => {
+        const key = inp.getAttribute('data-k');
+        const dsi = chart.data.datasets.findIndex(d => d.label === (key==='price'? (sym + ' price'): key));
+        if (dsi >= 0) chart.data.datasets[dsi].hidden = !inp.checked;
+        chart.update('none');
+      });
+    });
+
+    function refreshBin() {
+      const thr = Number(title.querySelector('input[data-role="thr"]').value || 0);
+      const m2 = Array.isArray(s['M2']) ? s['M2'] : null;
+      const bin = m2 ? computeBin(m2, thr) : [];
+      const dsi = chart.data.datasets.findIndex(d => d.label === 'M2bin');
+      if (dsi >= 0) chart.data.datasets[dsi].data = bin;
+      chart.update('none');
+    }
+    title.querySelector('input[data-role="thr"]').addEventListener('input', refreshBin);
+    refreshBin(); // initial
+  });
+})();
+</script>
+</body>
+</html>
