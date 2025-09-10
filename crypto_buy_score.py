@@ -99,4 +99,267 @@ def score_row(r: pd.Series) -> int:
     return int(s)
 
 # -----------------------------
-# Out
+# Output
+# -----------------------------
+def log_to_csv(records: list[dict]):
+    if not records: return
+    df = pd.DataFrame.from_records(records)
+    CSV_PATH.parent.mkdir(parents=True, exist_ok=True)
+    header = not CSV_PATH.exists()
+    df.to_csv(CSV_PATH, mode="a", index=False, header=header)
+
+def _last_run_iso() -> str:
+    try:
+        if CSV_PATH.exists():
+            df = pd.read_csv(CSV_PATH, usecols=["timestamp_utc"])
+            if not df.empty:
+                t = pd.to_datetime(df["timestamp_utc"], utc=True).max().to_pydatetime()
+                return iso_utc(t)
+    except Exception:
+        pass
+    return iso_utc_now()
+
+def write_html_from_csv():
+    initial_table = ""
+    try:
+        if CSV_PATH.exists():
+            df = pd.read_csv(CSV_PATH)
+            if not df.empty:
+                latest = (df.sort_values("timestamp_utc", ascending=False)
+                            .groupby("symbol", as_index=False).first())
+                initial_table = latest.to_html(index=False, float_format=lambda x: f"{x:.6f}")
+    except Exception:
+        pass
+
+    last_run_iso = _last_run_iso()
+
+    # Keep the JS very ES5-friendly to avoid parser quirks
+    html = """<!doctype html><html><head><meta charset="utf-8"><title>Buy Scores</title>
+<style>
+body{font-family:-apple-system,Helvetica,Arial,sans-serif;margin:20px}
+h2{margin:0 0 8px}
+.status{display:flex;gap:16px;align-items:center;margin:8px 0 14px;flex-wrap:wrap}
+.dot{width:10px;height:10px;border-radius:50%;background:#ef4444;box-shadow:0 0 6px #ef4444}
+.kv span{font-weight:600}
+table{border-collapse:collapse;width:100%;margin-top:16px}
+th,td{border:1px solid #ddd;padding:6px;text-align:right}
+th{text-align:center;background:#f5f5f5}
+.container{max-width:1100px;margin:0 auto}
+canvas{width:100%;height:420px}
+.note{color:#666;font-size:12px;margin-top:6px}
+</style></head><body>
+<div class="container">
+  <h2>Buy Scores (latest per symbol)</h2>
+  <div class="status">
+    <div id="statusDot" class="dot"></div>
+    <div class="kv">Last run (UTC): <span id="lastRun">__LAST_RUN__</span></div>
+    <div class="kv"><small>Uptime since last run:</small> <span id="uptime">—</span></div>
+    <div class="kv"><small>Next run in (~every __UI_INTERVAL__ min):</small> <span id="countdown">—</span></div>
+  </div>
+  <div style="margin:12px 0">
+    <canvas id="scoreChart"></canvas>
+    <div class="note">X axis: left = __LOOKBACK__ hours ago, right = now.</div>
+  </div>
+  <div id="tableWrap">__TABLE__</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+<script>
+(function(){
+'use strict';
+
+var LOOKBACK_HOURS = __LOOKBACK__;
+var UI_INTERVAL_MINUTES = __UI_INTERVAL__;
+var FRESH_MS = 10*60*1000;
+
+var statusDot=document.getElementById('statusDot');
+var lastRunEl=document.getElementById('lastRun');
+var uptimeEl=document.getElementById('uptime');
+var countdownEl=document.getElementById('countdown');
+
+var ctx=document.getElementById('scoreChart').getContext('2d');
+var chart=new Chart(ctx,{type:'line',data:{labels:[],datasets:[]},
+  options:{responsive:true,interaction:{mode:'nearest',intersect:false},
+    plugins:{legend:{position:'top'},title:{display:true,text:'Strong Buy Score (0–100) — last '+LOOKBACK_HOURS+' hours'}},
+    scales:{x:{type:'time',time:{tooltipFormat:'HH:mm',displayFormats:{minute:'HH:mm'}},ticks:{autoSkip:true,maxTicksLimit:25}},
+            y:{min:0,max:100,ticks:{stepSize:20}}}});
+
+function parseCSV(t){
+  var lines=t.replace(/\\r/g,'').trim().split('\\n'); if(!lines.length) return [];
+  var headers=lines.shift().split(',');
+  var out=[], i, j, cols, obj;
+  for(i=0;i<lines.length;i++){
+    cols=lines[i].split(',');
+    obj={};
+    for(j=0;j<headers.length;j++){ obj[headers[j]]=cols[j]; }
+    out.push(obj);
+  }
+  return out;
+}
+
+function fmt(ms){
+  if(!(ms>=0)) return '—';
+  var s=Math.floor(ms/1000);
+  var h=('0'+Math.floor(s/3600)).slice(-2);
+  var m=('0'+Math.floor((s%3600)/60)).slice(-2);
+  var x=('0'+Math.floor(s%60)).slice(-2);
+  return h+':'+m+':'+x;
+}
+
+function floor15(d){ var step=900000; return new Date(Math.floor(d.getTime()/step)*step); }
+function nextCountdown(){ var step=900000; var n=new Date(Math.ceil(Date.now()/step)*step); return n-Date.now(); }
+
+function buildTimeline(lastMs,hours){
+  var end=new Date(lastMs), start=new Date(end.getTime()-hours*3600000);
+  var out=[], step=900000, t;
+  for(t=floor15(start); t<=floor15(end); t=new Date(t.getTime()+step)){ out.push(new Date(t).toISOString()); }
+  return out;
+}
+
+function seriesFromRows(rows,timeline){
+  var bySym={}, syms={}, i, s;
+  for(i=0;i<rows.length;i++){ syms[rows[i].symbol]=true; }
+  for(s in syms){ if(syms.hasOwnProperty(s)) bySym[s]=new Array(timeline.length).fill(null); }
+
+  var idx=new Map(timeline.map(function(t,i){ return [t,i]; }));
+
+  rows.sort(function(a,b){ return Date.parse(a.timestamp_utc)-Date.parse(b.timestamp_utc); });
+
+  rows.forEach(function(r){
+    var t=Date.parse(r.timestamp_utc);
+    if(!(t>0)) return;
+    var b=floor15(new Date(t)).toISOString();
+    var k=idx.get(b);
+    if(k===undefined) return;
+    var v=parseInt(r.score,10);
+    if(v>=0) bySym[r.symbol][k]=v;
+  });
+  return bySym;
+}
+
+function renderTable(latest){
+  var cols=["timestamp_utc","symbol","score","close","ema20","ema50","rsi","macd","macd_signal","macd_hist","bb_low","bb_mid","bb_high"];
+  var html='<table><thead><tr>'+cols.map(function(c){return '<th>'+c+'</th>';}).join('')+'</tr></thead><tbody>';
+  latest.forEach(function(r){ html+='<tr>'+cols.map(function(c){return '<td>'+(r[c]||'')+'</td>';}).join('')+'</tr>'; });
+  html+='</tbody></table>';
+  document.getElementById('tableWrap').innerHTML=html;
+}
+
+function loadAndUpdate(){
+  fetch('buy_scores.csv?t='+Date.now(),{cache:'no-store'})
+  .then(function(res){ if(!res.ok) throw new Error('HTTP '+res.status); return res.text(); })
+  .then(function(text){
+    var rows=parseCSV(text);
+    if(!rows.length) return;
+
+    var times=rows.map(function(r){ return Date.parse(r.timestamp_utc); }).filter(function(n){ return n>0; });
+    if(!times.length) throw new Error('no parseable timestamps');
+    var lastMs=Math.max.apply(null,times);
+    lastRunEl.textContent=new Date(lastMs).toISOString();
+
+    var ms=Date.now()-lastMs;
+    var fresh=ms<FRESH_MS;
+    statusDot.style.background=fresh?'#22c55e':'#ef4444';
+    statusDot.style.boxShadow=fresh?'0 0 6px #22c55e':'0 0 6px #ef4444';
+    uptimeEl.textContent=fmt(ms);
+    countdownEl.textContent=fmt(nextCountdown());
+
+    var latestMap=new Map();
+    rows.slice().sort(function(a,b){return Date.parse(b.timestamp_utc)-Date.parse(a.timestamp_utc);})
+        .forEach(function(r){ if(!latestMap.has(r.symbol)) latestMap.set(r.symbol,r); });
+    renderTable(Array.from(latestMap.values()));
+
+    var tl=buildTimeline(lastMs, LOOKBACK_HOURS);
+    var series=seriesFromRows(rows, tl);
+    chart.data.labels=tl;
+
+    var palette=["#1f77b4","#ff7f0e","#2ca02c","#d62728","#9467bd","#8c564b","#e377c2","#7f7f7f","#bcbd22","#17becf"];
+    var ds=[], i=0, sym;
+    for(sym in series){
+      if(!series.hasOwnProperty(sym)) continue;
+      ds.push({
+        label:sym,
+        data:series[sym],
+        borderColor:palette[i%palette.length],
+        backgroundColor:palette[i%palette.length],
+        spanGaps:true,
+        tension:0.25,
+        pointRadius:3,
+        pointHoverRadius:5
+      });
+      i++;
+    }
+    chart.data.datasets=ds;
+    chart.update('none');
+  })
+  .catch(function(e){ console.error(e); });
+}
+
+loadAndUpdate();
+setInterval(function(){
+  var s=Date.parse((lastRunEl.textContent||'').trim());
+  if(s>0){
+    var ms=Date.now()-s;
+    uptimeEl.textContent=fmt(ms);
+    countdownEl.textContent=fmt(nextCountdown());
+  }
+},1000);
+setInterval(loadAndUpdate,30000);
+
+})();</script></body></html>"""
+
+    html = (html
+            .replace("__LAST_RUN__", last_run_iso)
+            .replace("__LOOKBACK__", str(LOOKBACK_HOURS))
+            .replace("__UI_INTERVAL__", str(UI_INTERVAL_MINUTES))
+            .replace("__TABLE__", initial_table))
+    HTML_PATH.write_text(html, encoding="utf-8")
+
+def git_push():
+    try:
+        subprocess.run(["git","add","docs"], check=True)
+        subprocess.run(["git","commit","-m", f"Update {iso_utc_now()}"], check=True)
+        subprocess.run(["git","push"], check=True)
+        print("✅ Pushed to GitHub.")
+    except Exception as e:
+        print("⚠️ Git push failed:", e)
+
+def run_once():
+    now = iso_utc_now()
+    rows: list[dict] = []
+    for sym in SYMBOLS:
+        try:
+            df = fetch_df(sym, TIMEFRAME, LOOKBACK_HOURS)
+            df = add_indicators(df)
+            last = df.iloc[-1]
+            score = score_row(last)
+            print(f"{sym}: {score}/100 | Close={last['close']:.2f} | RSI={last['rsi']:.1f}")
+            rows.append({
+                "timestamp_utc": now,
+                "symbol": sym,
+                "score": int(score),
+                "close": float(last["close"]),
+                "ema20": float(last["ema20"]),
+                "ema50": float(last["ema50"]),
+                "rsi": float(last["rsi"]),
+                "macd": float(last["macd"]),
+                "macd_signal": float(last["macd_signal"]),
+                "macd_hist": float(last["macd_hist"]),
+                "bb_low": float(last["bb_low"]),
+                "bb_mid": float(last["bb_mid"]),
+                "bb_high": float(last["bb_high"]),
+            })
+            time.sleep(0.2)
+        except Exception:
+            import traceback; print(f"{sym}: ERROR"); traceback.print_exc()
+
+    if rows:
+        log_to_csv(rows)
+        write_html_from_csv()
+        git_push()
+    else:
+        print("No records written; skipping push.")
+
+if __name__ == "__main__":
+    run_once()
