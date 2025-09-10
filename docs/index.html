@@ -1,183 +1,214 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Price & M-signals (48h) — working viewer (M1..M10)</title>
-<link rel="preconnect" href="https://cdn.jsdelivr.net" />
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Price & M-signals (48h) — fixed size + reliable toggles</title>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <style>
-  :root{--fg:#111;--muted:#64748b;--border:#e5e7eb;--bg:#fff;--card:#fafafa}
-  html,body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.4 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial}
-  .wrap{max-width:1100px;margin:24px auto;padding:0 12px}
-  h1{margin:0 0 8px;font-size:20px}
-  .hint{color:var(--muted);font-size:12px;margin-bottom:18px}
-  .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px 12px 8px;margin:16px 0}
-  .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:4px 0 10px}
-  .spacer{flex:1}
-  .badge{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:999px;padding:4px 8px;background:#fff}
-  .badge input{transform:translateY(1px)}
-  .kv{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:8px;padding:4px 8px;background:#fff}
-  .lbl{color:#0f172a;font-weight:600}
-  canvas{width:100%;height:360px;display:block}
-  .legend{display:flex;align-items:center;gap:14px;margin:6px 0 2px;color:var(--muted);font-size:12px}
-  .dot{width:10px;height:10px;border-radius:50%}
+  :root {
+    --bg: #f6f7f9;
+    --card: #fff;
+    --ink: #111;
+    --muted: #666;
+    --line: #e5e7eb;
+  }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); font-family: -apple-system, system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
+  .container { max-width: 1200px; margin: 20px auto 80px; padding: 0 16px; }
+  h1 { font-size: 22px; margin: 6px 0 14px; }
+  .note { color: var(--muted); font-size: 13px; margin-bottom: 8px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin: 18px auto; }
+  .head { display:flex; align-items:center; gap:12px; flex-wrap: wrap; margin: 6px 0 8px; }
+  .sym { font-weight: 700; letter-spacing: 0.1px; }
+  .controls { display:flex; gap:10px; row-gap: 8px; flex-wrap: wrap; font-size: 13px; }
+  .controls label { display:inline-flex; align-items:center; gap:6px; padding:6px 8px; border:1px solid var(--line); border-radius: 8px; user-select:none; }
+  .controls input[type="checkbox"] { transform: translateY(1px); }
+  .controls input[type="number"] { width: 64px; padding:6px 8px; border:1px solid var(--line); border-radius:8px; }
+  .fixed-canvas { width: 100% !important; height: 360px !important; display: block; }
+  .legend { color: var(--muted); font-size: 12px; margin-top: 6px; }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <h1>Price &amp; M-signals (48h) — fixed size + axis mapping (working)</h1>
-  <div class="hint">Left axis: price. Right axis: score (0–100). Hourly labels; 15‑minute ticks. Dashed = hidden by default. This page reads <code>docs/data.json</code>.</div>
+<div class="container">
+  <h1>Price & M-signals (48h) — fixed size + reliable toggles</h1>
+  <div class="note">Left axis: price. Right axis: score (0–100). Hourly labels; 15-minute ticks.</div>
   <div id="charts"></div>
 </div>
 
-<!-- Chart.js + date adapter -->
+<!-- Chart.js + time adapter -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
-<script src="vendor/time-adapter-guard.js"></script>
-
+<script src="./vendor/time-adapter-guard.js"></script>
 <script>
-(async function(){
-  const root = document.getElementById('charts');
+const PALETTE = [
+  "#2563eb","#dc2626","#16a34a","#9333ea","#0891b2",
+  "#ea580c","#4f46e5","#059669","#db2777","#6d28d9",
+  "#d97706","#0e7490"
+];
+const MODELS = ["M1","M2","M3","M4","M5","M6","M7","M8","M9","M10"];
 
-  // helper: make section
-  function makeSection(sym){
-    const card = document.createElement('div');
-    card.className = 'card';
-
-    const row = document.createElement('div');
-    row.className = 'row';
-    const title = document.createElement('div');
-    title.className = 'lbl';
-    title.textContent = sym;
-    row.appendChild(title);
-
-    // controls
-    const ctrl = (id,label,checked=false)=>{
-      const span = document.createElement('label');
-      span.className='badge';
-      span.innerHTML = '<input type="checkbox" '+(checked?'checked':'')+' data-id="'+id+'"> <span>'+label+'</span>';
-      return span;
-    };
-    const ids = ['price','M1','M2','M3','M4','M5','M6','M7','M8','M9','M10'];
-    row.appendChild(ctrl('price','price',true));
-    ids.slice(1).forEach(s=> row.appendChild(ctrl(s,s,false)));
-
-    row.appendChild(Object.assign(document.createElement('div'),{className:'spacer'}));
-    card.appendChild(row);
-
-    const leg = document.createElement('div');
-    leg.className='legend';
-    leg.innerHTML = '<span class="dot" style="background:#2563eb"></span> '+sym+' price';
-    card.appendChild(leg);
-
-    const c = document.createElement('canvas');
-    card.appendChild(c);
-
-    root.appendChild(card);
-    return {canvas:c, card};
+function el(type, attrs={}, children=[]) {
+  const n = document.createElement(type);
+  for (const [k,v] of Object.entries(attrs)) {
+    if (k === "class") n.className = v;
+    else if (k === "text") n.textContent = v;
+    else n.setAttribute(k,v);
   }
+  for (const c of children) n.appendChild(c);
+  return n;
+}
 
-  function palette(i){
-    const colors = ['#2563eb','#ef4444','#22c55e','#a855f7','#f59e0b','#06b6d4','#fb7185','#10b981','#8b5cf6','#f97316','#3b82f6'];
-    return colors[i % colors.length];
-  }
+function makeCard(sym, onToggle) {
+  const card = el("div", {class:"card"});
+  const head = el("div", {class:"head"});
+  head.appendChild(el("div", {class:"sym", text:sym}));
 
-  // fetch data.json
-  async function loadJSON(){
-    const res = await fetch('data.json?t=' + Date.now(), {cache:'no-store'});
-    if(!res.ok) throw new Error('Failed to fetch data.json: ' + res.status);
-    return res.json();
-  }
+  const controls = el("div", {class:"controls"});
+  // price checkbox (on by default)
+  controls.appendChild(controlCheckbox(sym, "price", true, onToggle));
 
-  const data = await loadJSON();
-  const labels = (data.labels||[]).map(ts=> new Date(ts));
-  const symbols = data.symbols || {};
+  // M1..M10 (off by default)
+  for (const m of MODELS) controls.appendChild(controlCheckbox(sym, m, false, onToggle));
 
-  for(const sym of Object.keys(symbols)){
-    const {canvas} = makeSection(sym);
-    const series = symbols[sym] || {};
-    const price = series.close || series.price || [];
+  head.appendChild(controls);
+  card.appendChild(head);
 
-    // datasets for M1..M10 if present
-    function makeM(id){
-      return (series[id] || series[id.toLowerCase()] || series[id.replace('M','model')] || []).slice();
-    }
+  // canvas
+  const canvas = el("canvas", {class:"fixed-canvas"});
+  card.appendChild(canvas);
 
-    const ds = [];
-    // Price (left axis)
-    ds.push({
-      label: sym + ' price',
-      yAxisID: 'y',
-      data: price,
-      borderColor: palette(0),
-      backgroundColor: palette(0),
-      tension: 0.25,
+  // tiny legend line
+  const legend = el("div", {class:"legend", text:"Toggle lines above. Score axis is fixed at 0–100."});
+  card.appendChild(legend);
+
+  return {card, canvas};
+}
+
+function controlCheckbox(sym, key, checked, onToggle) {
+  const id = `${sym.replace(/[^A-Za-z0-9]/g,"_")}_${key}`;
+  const input = el("input", {type:"checkbox", id});
+  input.checked = checked;
+  input.addEventListener("change", () => onToggle(sym, key, input.checked));
+  const label = el("label");
+  const spanTxt = (key === "price") ? "price" : key;
+  label.appendChild(input);
+  label.appendChild(el("span", {text: spanTxt}));
+  return label;
+}
+
+function buildChart(ctx, labels, series, sym) {
+  const price = series.close || [];
+  const datasets = [];
+  // price
+  datasets.push({
+    label: sym + " price",
+    xAxisID: "x",
+    yAxisID: "yPrice",
+    data: price,
+    borderColor: PALETTE[0],
+    backgroundColor: PALETTE[0],
+    borderWidth: 2,
+    pointRadius: 0,
+    tension: 0.25,
+    spanGaps: true,
+    hidden: false
+  });
+
+  // models M1..M10 (start hidden)
+  MODELS.forEach((m, i) => {
+    const arr = series[m] || [];
+    datasets.push({
+      label: m,
+      xAxisID: "x",
+      yAxisID: "yScore",
+      data: arr,
+      borderColor: PALETTE[(i+1)%PALETTE.length],
+      backgroundColor: PALETTE[(i+1)%PALETTE.length],
+      borderWidth: 1.5,
       pointRadius: 0,
+      tension: 0.25,
+      spanGaps: true,
+      hidden: true
     });
+  });
 
-    // M1..M10 (right axis, hidden by default)
-    for(let i=1;i<=10;i++){
-      const key = 'M'+i;
-      const arr = makeM(key);
-      if(arr.length){
-        ds.push({
-          label: key,
-          yAxisID: 'yR',
-          data: arr,
-          borderColor: palette(i),
-          backgroundColor: palette(i),
-          tension: 0.2,
-          spanGaps: true,
-          pointRadius: 0,
-          hidden: true, // start hidden; checkbox toggles
-        });
+  const chart = new Chart(ctx, {
+    type: "line",
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false, // we control height via CSS
+      animation: false,
+      parsing: false,
+      interaction: { mode: "nearest", intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: { enabled: true }
+      },
+      scales: {
+        x: {
+          type: "time",
+          time: { tooltipFormat: "MMM d, HH:mm", displayFormats: { minute: "HH:mm" } },
+          ticks: { autoSkip: true, maxTicksLimit: 24 }
+        },
+        yPrice: {
+          type: "linear",
+          position: "left",
+          grid: { drawOnChartArea: true }
+        },
+        yScore: {
+          type: "linear",
+          position: "right",
+          min: 0, max: 100,
+          grid: { drawOnChartArea: false }
+        }
       }
     }
+  });
+  return chart;
+}
 
-    const ctx = canvas.getContext('2d');
-    const chart = new Chart(ctx, {
-      type: 'line',
-      data: { labels, datasets: ds },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        interaction: { mode: 'nearest', intersect: false },
-        scales: {
-          x: {
-            type: 'time',
-            time: { tooltipFormat: 'HH:mm', displayFormats: { minute:'HH:mm', hour:'HH:mm' } },
-            ticks: { source:'auto' }
-          },
-          y: {
-            position: 'left',
-            ticks: { callback: v => v },
-            grid: { drawOnChartArea: true }
-          },
-          yR: {
-            position: 'right',
-            min: 0, max: 100,
-            grid: { drawOnChartArea: false },
-            ticks: { stepSize: 20 }
-          }
-        },
-        plugins: { legend: { display:false } }
+(async function main(){
+  try {
+    const res = await fetch("data.json?t=" + Date.now(), {cache:"no-store"});
+    const d = await res.json();
+    const labels = d.labels || [];
+    const symbols = d.symbols || {};
+    const wrap = document.getElementById("charts");
+
+    const charts = new Map(); // sym => {chart, datasetsIndexMap}
+    function onToggle(sym, key, checked) {
+      const rec = charts.get(sym);
+      if (!rec) return;
+      const { chart, map } = rec;
+      if (key === "price") {
+        chart.data.datasets[ map.price ].hidden = !checked;
+      } else {
+        const idx = map.models[key];
+        if (idx != null) chart.data.datasets[idx].hidden = !checked;
       }
-    });
+      chart.update("none");
+    }
 
-    // wire up checkboxes in this card
-    const inputs = canvas.parentElement.querySelectorAll('input[type="checkbox"]');
-    inputs.forEach(inp=>{
-      inp.addEventListener('change', ()=>{
-        const id = inp.getAttribute('data-id');
-        if(id==='price'){
-          chart.data.datasets[0].hidden = !inp.checked;
-        } else {
-          const idx = chart.data.datasets.findIndex(d=>d.label===id);
-          if(idx>-1){ chart.data.datasets[idx].hidden = !inp.checked; }
-        }
-        chart.update('none');
-      });
+    Object.keys(symbols).forEach((sym, sIdx) => {
+      const series = symbols[sym] || {};
+      const {card, canvas} = makeCard(sym, onToggle);
+      wrap.appendChild(card);
+
+      const ctx = canvas.getContext("2d");
+      const chart = buildChart(ctx, labels, series, sym);
+
+      // cache dataset indexes
+      const map = {
+        price: 0,
+        models: {}
+      };
+      MODELS.forEach((m, i) => map.models[m] = 1 + i); // after price
+      charts.set(sym, {chart, map});
     });
+  } catch (e) {
+    console.error("viewer init failed", e);
+    alert("Failed to load data.json. Check console.");
   }
 })();
 </script>

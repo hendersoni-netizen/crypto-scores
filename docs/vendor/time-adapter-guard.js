@@ -1,9 +1,7 @@
-// Guard + confirm adapter is present (for Chart.js time scale)
+// Guard + quick console note for the time adapter
 (function(){
-  if (!window.Chart) return;
-  // If adapter didn't register, time scale may throw; expose a tiny check
-  try {
-    const ok = !!Chart.registry.adapters._date;
-    if (!ok) console.warn('[time-adapter-guard] date adapter missing; loading fallback');
-  } catch(e){ console.warn('[time-adapter-guard] check failed', e); }
+  const ok = !!(Chart && Chart._adapters && Chart._adapters.date);
+  if (!ok) {
+    console.warn("time-adapter-guard: date adapter is not fully registered. Check chartjs-adapter-date-fns import.");
+  }
 })();
