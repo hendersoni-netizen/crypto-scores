@@ -1,203 +1,176 @@
 <!doctype html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Price & Strong Buy score (last 48 hours)</title>
-  <style>
-    :root { --fg:#111; --muted:#666; --card:#fff; --bg:#fafafa; --brand:#2563eb; --score:#d62728; }
-    *{box-sizing:border-box}
-    body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial}
-    .wrap{max-width:1080px;margin:24px auto;padding:0 12px}
-    h1{font-size:20px;margin:0 0 6px}
-    .meta{color:var(--muted);font-size:12px;margin-bottom:16px}
-    .card{background:var(--card);border:1px solid #e5e7eb;border-radius:12px;padding:12px 12px 8px;margin:16px 0;box-shadow:0 2px 8px rgba(0,0,0,.04)}
-    .toprow{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:4px 0 8px}
-    .sym{font-weight:700;letter-spacing:.3px}
-    .toggles{display:flex;gap:8px;flex-wrap:wrap;font-size:12px;color:#374151}
-    .toggles label{display:inline-flex;gap:4px;align-items:center;padding:2px 6px;border:1px solid #e5e7eb;border-radius:8px;background:#f8fafc}
-    .ctrls{display:flex;gap:12px;align-items:center;margin-left:auto}
-    .ctrls input[type="number"]{width:72px;padding:4px 6px;border:1px solid #d1d5db;border-radius:8px}
-    canvas{width:100%;height:320px}
-    .note{font-size:11px;color:var(--muted);margin-top:6px}
-    .badge{display:inline-block;background:#111;color:#fff;border-radius:6px;padding:0 6px;font-size:11px;line-height:18px;margin-left:6px}
-  </style>
-
-  <!-- Chart.js + time adapter -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Crypto scores — M1..M10 (reverted)</title>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<style>
+  :root { --fg:#0f172a; --muted:#64748b; --grid:#e5e7eb; --accent:#2563eb; }
+  body{font-family: ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial;
+       color:var(--fg); margin:24px; background:#fff;}
+  h1{font-size:20px;margin:0 0 4px 0}
+  .sub{color:var(--muted);font-size:12px;margin-bottom:14px}
+  .card{border:1px solid var(--grid); border-radius:12px; padding:14px 14px 8px; margin:18px 0;}
+  .row{display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:4px 0 10px;}
+  .pill{display:inline-flex; align-items:center; gap:6px; padding:4px 8px; border:1px solid var(--grid);
+        border-radius:999px; background:#fff; font-size:12px}
+  .pill input{transform:translateY(1px)}
+  .th{margin-left:auto; color:var(--muted)}
+  canvas{width:100%; height:340px}
+  .foot{font-size:12px;color:var(--muted); margin-top:6px}
+</style>
 </head>
 <body>
-  <div class="wrap">
-    <h1>Price & Strong Buy score (last 48 hours)</h1>
-    <div class="meta">
-      Left axis: price. Right axis: score (0–100). Hourly labels; 15‑minute ticks.
-      <span id="lastUpdated" class="badge">Loading…</span>
-    </div>
-    <div id="charts"></div>
-  </div>
+  <h1>Price & M-signals (48h) — reverted (M1..M10 only)</h1>
+  <div class="sub">Left axis: price. Right axis: score (0–100). Hourly labels; 15‑minute ticks. Last uploaded (UTC) is read from <code>docs/data.json</code>. This version intentionally removes M2bin + threshold.</div>
 
-<script>
-const PALETTE = ["#2563eb","#ef4444","#10b981","#a855f7","#06b6d4","#f59e0b","#dc2626","#16a34a","#3b82f6"];
-const MODELS = ["M1","M2","M3","M4","M5"];   // existing models in data.s.*
-const BIN_KEY = "M2bin";                     // our new thresholded binary model id
-const DEF_THRESH = 50;                       // default threshold
+  <div id="app"></div>
 
-// Util for localStorage keys per symbol
-const k = (sym) => `thresh_M2_${sym}`;
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+  <script>
+  const SYMS = ["BTC/USDT","ETH/USDT","ONDO/USDT"];
+  const PAL = ["#2563eb","#0ea5e9","#22c55e","#f59e0b","#ef4444","#8b5cf6","#14b8a6","#84cc16","#f43f5e","#a855f7"];
+  const LINE_STYLE = {tension:0.25, pointRadius:0, spanGaps:true};
 
-// Build a chart card per symbol
-function makeCard(sym){
-  const card = document.createElement('div'); card.className='card';
-  const row  = document.createElement('div'); row.className='toprow';
-  const symEl= document.createElement('div'); symEl.className='sym'; symEl.textContent=sym;
-  const togg = document.createElement('div'); togg.className='toggles';
-  const ctrls= document.createElement('div'); ctrls.className='ctrls';
+  function niceCard(title){
+    const d = document.createElement('div'); d.className="card";
+    const row = document.createElement('div'); row.className="row";
+    const h = document.createElement('div'); h.textContent = title; h.style.fontWeight="600";
+    row.appendChild(h);
+    d.appendChild(row);
+    const ctrl = document.createElement('div'); ctrl.className="row";
+    d.appendChild(ctrl);
+    const cv = document.createElement('canvas');
+    d.appendChild(cv);
+    const foot = document.createElement('div'); foot.className="foot";
+    foot.textContent = "Toggle lines above. Data: docs/data.json";
+    d.appendChild(foot);
+    return {card:d, head:row, ctrls:ctrl, canvas:cv};
+  }
 
-  // Checkboxes for price + models + our BIN
-  const items = ["price", ...MODELS, BIN_KEY];
-  items.forEach((id, i) => {
-    const lab = document.createElement('label');
-    const cb  = document.createElement('input'); cb.type='checkbox';
-    cb.checked = (id === "price" || id === "M2" || id === BIN_KEY);  // show price + M2 + BIN initially
-    cb.dataset.layer = id;
-    lab.appendChild(cb);
-    lab.appendChild(document.createTextNode(" " + id));
-    togg.appendChild(lab);
-  });
+  function addToggle(row, id, label, checked, onChange){
+    const pill = document.createElement('label'); pill.className="pill";
+    const cb = document.createElement('input'); cb.type="checkbox"; cb.checked=checked; cb.id=id;
+    cb.addEventListener('change', ()=>onChange(cb.checked));
+    const txt = document.createElement('span'); txt.textContent = label;
+    pill.appendChild(cb); pill.appendChild(txt);
+    row.appendChild(pill);
+    return cb;
+  }
 
-  // Threshold input for M2 -> BIN
-  const thLab = document.createElement('label');
-  thLab.textContent = "M2 threshold:";
-  const thIn = document.createElement('input');
-  thIn.type='number'; thIn.min='0'; thIn.max='100'; thIn.step='0.5';
-  thIn.value = localStorage.getItem(k(sym)) ?? DEF_THRESH;
-  thIn.title = "Set per‑symbol threshold for (M2 > value ? 1 : 0)";
-  thLab.style.marginRight = "6px";
+  async function loadJSON(){
+    // Try docs-local then fallback
+    const urls = ["data.json", "docs/data.json"];
+    for (const u of urls){
+      try{
+        const r = await fetch(u + "?t=" + Date.now(), {cache:"no-store"});
+        if (r.ok){ return await r.json(); }
+      }catch(e){/*continue*/}
+    }
+    throw new Error("Unable to fetch data.json");
+  }
 
-  const thBadge = document.createElement('span'); thBadge.className='badge'; thBadge.textContent='BIN';
-  ctrls.appendChild(thLab); ctrls.appendChild(thIn); ctrls.appendChild(thBadge);
+  function normKeys(obj){
+    // Lowercase all signal keys e.g. M1->m1
+    const out={};
+    for (const [k,v] of Object.entries(obj)){
+      out[k.toLowerCase()] = v;
+    }
+    return out;
+  }
 
-  row.appendChild(symEl); row.appendChild(togg); row.appendChild(ctrls);
-  card.appendChild(row);
-
-  const c = document.createElement('canvas'); card.appendChild(c);
-  const note = document.createElement('div'); note.className='note';
-  note.textContent = "Toggle lines above. The black dashed line is the binary signal (0/1) derived from M2 using the threshold.";
-  card.appendChild(note);
-
-  return {card, canvas:c, controls:{thInput:thIn}, toggles:card.querySelectorAll('input[type=checkbox]')};
-}
-
-// Convert M2 to binary 0/1 per threshold, preserving nulls
-function m2ToBin(arr, thresh){
-  const t = Number(thresh);
-  return (arr||[]).map(v => (v == null ? null : (Number(v) > t ? 1 : 0)));
-}
-
-(async function init(){
-  const res = await fetch('data.json?t=' + Date.now(), {cache:'no-store'});
-  const {labels, symbols, meta} = await res.json();
-  document.getElementById('lastUpdated').textContent = 'Last updated (UTC): ' + (meta?.updated_utc ?? '—');
-
-  // Build cards
-  const ctr = document.getElementById('charts');
-  const syms = Object.keys(symbols);
-  syms.forEach((sym, si) => {
-    const {card, canvas, controls, toggles} = makeCard(sym);
-    ctr.appendChild(card);
-
-    const s = symbols[sym] || {};
-    const close = s.close || [];
-    const scores = s.s || s.score || {}; // support either s or score namespace
-    const m2 = scores.M2 || scores.m2 || [];
-
-    // Prepare datasets
-    const ds = [];
-    ds.push({
-      label: sym + ' price', yAxisID: 'price',
-      data: close, borderColor: PALETTE[si % PALETTE.length],
-      backgroundColor: PALETTE[si % PALETTE.length], pointRadius:0, tension:0.25, spanGaps:true
+  function makeDatasets(sym, series){
+    // series: { close:[], m1:[], ... m10:[] }
+    const dsets=[];
+    dsets.push({
+      label: sym + " price",
+      yAxisID:"price",
+      borderColor:"#2563eb",
+      backgroundColor:"#2563eb",
+      data: series.close || [], ...LINE_STYLE, hidden:false
     });
-
-    MODELS.forEach((m, i) => {
-      const arr = (scores[m] || scores[m.toLowerCase()] || []).slice();
-      ds.push({
-        label: m, yAxisID: 'score', data: arr,
-        borderColor: PALETTE[(i+2) % PALETTE.length],
-        backgroundColor: PALETTE[(i+2) % PALETTE.length],
-        pointRadius:0, tension:0.15, spanGaps:true, borderDash: m==='M2' ? [6,4] : undefined
+    for (let i=1;i<=10;i++){
+      const key = "m"+i;
+      const arr = series[key];
+      dsets.push({
+        label: key.toUpperCase(),
+        yAxisID:"score",
+        borderColor: PAL[(i-1)%PAL.length],
+        backgroundColor: PAL[(i-1)%PAL.length],
+        borderDash: [],
+        data: arr || [],
+        ...LINE_STYLE,
+        hidden: !arr || arr.length===0 // hide if absent
       });
-    });
+    }
+    return dsets;
+  }
 
-    // Binary dataset on its own axis
-    let binData = m2ToBin(m2, controls.thInput.value);
-    const binDS = {
-      label: BIN_KEY, yAxisID: 'bin', data: binData,
-      borderColor: '#111', backgroundColor:'#111', borderDash:[8,6], pointRadius:0, tension:0,
-      spanGaps:true
-    };
-    ds.push(binDS);
-
-    // Build chart
-    const ctx = canvas.getContext('2d');
-    const chart = new Chart(ctx, {
-      type:'line',
-      data:{ labels, datasets: ds },
+  function buildChart(ctx, labels, datasets){
+    return new Chart(ctx, {
+      type:"line",
+      data:{ labels, datasets },
       options:{
-        interaction:{mode:'nearest', intersect:false},
-        responsive:true,
         maintainAspectRatio:false,
+        interaction:{mode:"nearest", intersect:false},
         scales:{
-          x:{ type:'time', time:{ tooltipFormat:'HH:mm', displayFormats:{minute:'HH:mm'} },
-              ticks:{ autoSkip:true, maxTicksLimit:25 }},
-          price:{ position:'left', grid:{ drawOnChartArea:true } },
-          score:{ position:'right', min:0, max:100, grid:{ drawOnChartArea:false } },
-          bin:{ position:'right', min:0, max:1, offset:true, grid:{ drawOnChartArea:false },
-                ticks:{ stepSize:1 } }
+          x:{ type:"time",
+              time:{ tooltipFormat:"HH:mm", displayFormats:{minute:"HH:mm"}},
+              ticks:{ autoSkip:true, maxTicksLimit:25 }
+          },
+          price:{ position:"left", grid:{color:"#f3f4f6"} },
+          score:{ position:"right", min:0, max:100, grid:{display:false} }
         },
         plugins:{
-          legend:{ display:false },
-          annotation:{
-            annotations:{
-              nowline:{
-                type:'line', xMin: labels[labels.length-1], xMax: labels[labels.length-1],
-                borderColor:'#111', borderWidth:1.5, borderDash:[2,2],
-                label:{ display:true, content:'Now', backgroundColor:'rgba(17,17,17,0.85)', color:'#fff', position:'start', yAdjust:-6 }
-              }
-            }
-          }
+          legend:{ display:false }
         }
       }
     });
+  }
 
-    // Checkbox show/hide
-    toggles.forEach(cb => {
-      const id = cb.dataset.layer;
-      cb.addEventListener('change', () => {
-        chart.data.datasets.forEach(d => {
-          if ((id==='price' && d.yAxisID==='price' && d.label.endsWith('price'))
-            || d.label === id) {
-              d.hidden = !cb.checked;
-          }
+  function attachToggles(ctrls, chart){
+    // First dataset is price; next M1..M10
+    const priceCB = addToggle(ctrls,"price","price",true,(on)=>{ chart.setDatasetVisibility(0,on); chart.update("none"); });
+    for (let i=1;i<=10;i++){
+      ((idx,label)=>{
+        const dsIndex = idx; // 1..10 map to dataset index 1..10
+        const exists = chart.data.datasets[dsIndex] && chart.data.datasets[dsIndex].data && chart.data.datasets[dsIndex].data.length>0;
+        const cb = addToggle(ctrls, label, label, exists, (on)=>{
+          chart.setDatasetVisibility(dsIndex,on);
+          chart.update("none");
         });
-        chart.update();
-      });
-    });
+        cb.disabled = !exists;
+        if (!exists){
+          cb.parentElement.title = "No data for "+label+" in data.json";
+        }
+      })(i, "M"+i);
+    }
+  }
 
-    // Threshold change -> recompute BIN
-    controls.thInput.addEventListener('input', () => {
-      localStorage.setItem(k(sym), controls.thInput.value);
-      binDS.data = m2ToBin(m2, controls.thInput.value);
-      // ensure BIN visibility follows its checkbox
-      const binCB = Array.from(toggles).find(x => x.dataset.layer===BIN_KEY);
-      binDS.hidden = binCB ? !binCB.checked : false;
-      chart.update();
-    });
-  });
-})().catch(e => console.error(e));
-</script>
-  <!-- m2bin-hotfix -->
-  <script src="vendor/m2bin-hotfix.js"></script>
+  (async function(){
+    try{
+      const j = await loadJSON();
+      const labels = (j.labels||[]).map(s=>new Date(s));
+      const app = document.getElementById("app");
+
+      for (const sym of SYMS){
+        const card = niceCard(sym);
+        app.appendChild(card.card);
+        const sraw = (j.symbols && j.symbols[sym]) ? j.symbols[sym] : {};
+        const s = normKeys(sraw);
+        // Build datasets, then chart
+        const dsets = makeDatasets(sym, s);
+        const chart = buildChart(card.canvas.getContext("2d"), labels, dsets);
+        attachToggles(card.ctrls, chart);
+      }
+    }catch(e){
+      const p = document.createElement('pre');
+      p.textContent = "Error loading data.json: " + e.message;
+      document.body.appendChild(p);
+    }
+  })();
+  </script>
 </body>
 </html>
