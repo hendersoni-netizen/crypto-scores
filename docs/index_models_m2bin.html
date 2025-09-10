@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Price & M‑signals (48h) — fixed size + axis mapping</title>
+<link rel="preconnect" href="https://cdn.jsdelivr.net"/>
+<style>
+  :root{--fg:#111;--muted:#666;--a:#2563eb;--grid:#eee;--chip:#f4f4f5;}
+  body{font:14px/1.35 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:var(--fg);margin:18px;}
+  h1{font-size:18px;margin:0 0 6px;}
+  .wrap{max-width:1100px;margin:auto}
+  .row{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:12px 14px;margin:18px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+  .chips{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:8px}
+  .chip{display:inline-flex;align-items:center;gap:6px;background:var(--chip);border:1px solid #e5e7eb;border-radius:999px;padding:5px 10px;font-size:12px}
+  .chip input{accent-color:var(--a)}
+  .chip[aria-disabled="true"]{opacity:.35;pointer-events:none}
+  .k{font-weight:600}
+  .thresh{display:inline-flex;align-items:center;gap:6px;margin-left:12px}
+  .thresh input{width:54px;padding:4px;border:1px solid #e5e7eb;border-radius:6px}
+  .legend{display:flex;align-items:center;gap:10px;margin:6px 0 0;color:var(--muted);font-size:12px}
+  canvas{width:100%!important;height:360px!important}
+  .note{font-size:12px;color:var(--muted);margin-top:6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Price & M‑signals (48h) — fixed size + axis mapping</h1>
+  <div class="note">Left axis: price. Right axis: score (0–100). Hourly labels; 15‑minute ticks. Dashed black = M2bin (0/100) using threshold.</div>
+  <div id="last" class="note"></div>
+  <div id="charts"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+<script>
+const PALETTE = ["#2563eb","#16a34a","#f59e0b","#ea580c","#9333ea","#0891b2","#e11d48","#0ea5e9","#84cc16","#d946ef"];
+const MODELS  = ["M1","M2","M3","M4","M5","M6","M7","M8","M9","M10"];
+const EL = (tag,attrs={},...kids)=>{const e=document.createElement(tag);for(const[k,v]of Object.entries(attrs))if(v!=null)e.setAttribute(k,v===true?"":v);for(const k of kids) e.append(k);return e;};
+
+function buildChartBlock(sym, meta, sData, labels) {
+  const row = EL("div",{class:"row"});
+  const chips = EL("div",{class:"chips"});
+
+  chips.append(EL("span",{class:"k"}, sym));
+
+  // price toggle
+  const priceId = `${sym}__price`;
+  const priceBox = EL("input",{type:"checkbox",checked:true,"data-id":priceId});
+  chips.append(EL("label",{class:"chip"}, priceBox, EL("span",{}, "price")));
+
+  // model toggles
+  const present = new Set(Object.keys(sData));
+  const boxes = {};
+  MODELS.forEach((k,idx)=>{
+    const id = `${sym}__${k}`;
+    const box = EL("input",{type:"checkbox","data-id":id});
+    if (!present.has(k)) { box.disabled = true; }
+    boxes[k]=box;
+    chips.append(EL("label",{class:"chip","aria-disabled":(!present.has(k)).toString()}, box, EL("span",{}, k)));
+  });
+
+  // M2bin toggle + threshold
+  const m2binId = `${sym}__M2bin`;
+  const m2binBox = EL("input",{type:"checkbox","data-id":m2binId});
+  if (!present.has("M2")) m2binBox.disabled = true;
+  chips.append(EL("label",{class:"chip","aria-disabled":(!present.has("M2")).toString()}, m2binBox, EL("span",{},"M2bin")));
+  const thresh = EL("input",{type:"number",value:50,min:0,max:100,step:1});
+  chips.append(EL("span",{class:"thresh"}, EL("span",{},"M2 threshold:"), thresh));
+
+  row.append(chips);
+
+  const c = EL("canvas");
+  row.append(c);
+  row.append(EL("div",{class:"legend"},"Dashed black = M2bin"));
+
+  // Build datasets
+  const ds = [];
+
+  // price line (left axis)
+  ds.push({
+    id: priceId, label: `${sym} price`, data: (sData.close||[]).map((v,i)=>({x:labels[i], y:v})),
+    yAxisID:"price", tension:0.2, borderWidth:2, spanGaps:true, pointRadius:0, borderColor:"#2563eb"
+  });
+
+  // score models (right axis)
+  MODELS.forEach((k, idx)=>{
+    if (!sData[k]) return;
+    ds.push({
+      id: `${sym}__${k}`,
+      label: k,
+      data: sData[k].map((v,i)=>({x:labels[i], y:v})),
+      yAxisID:"score",
+      tension:0.25, borderWidth:1.5, spanGaps:true, pointRadius:0,
+      borderColor: PALETTE[idx % PALETTE.length],
+      hidden: true
+    });
+  });
+
+  // M2bin (initially hidden)
+  ds.push({
+    id: m2binId,
+    label: "M2bin",
+    data: [],
+    yAxisID: "score",
+    borderColor: "#111",
+    borderDash: [6,4],
+    spanGaps: true,
+    tension: 0,
+    pointRadius: 0,
+    hidden: true
+  });
+
+  const ctx = c.getContext("2d");
+  const chart = new Chart(ctx, {
+    type:"line",
+    data: { datasets: ds },
+    options: {
+      maintainAspectRatio:false,
+      interaction:{mode:"nearest",intersect:false},
+      scales:{
+        x:{type:"time",time:{tooltipFormat:"HH:mm"}, grid:{color:"#f1f5f9"}},
+        price:{position:"left",grid:{color:"#f1f5f9"}},
+        score:{position:"right",min:0,max:100,grid:{color:"#f1f5f9"}}
+      },
+      plugins:{legend:{display:false}}
+    }
+  });
+
+  // Wire up toggles
+  function toggleDataset(id, visible){
+    const d = chart.data.datasets.find(x=>x.id===id);
+    if (!d) return;
+    d.hidden = !visible;
+    chart.update();
+  }
+  priceBox.addEventListener("change", e=>toggleDataset(priceId, e.target.checked));
+  Object.entries(boxes).forEach(([k,box])=>{
+    box.addEventListener("change", e=>toggleDataset(`${sym}__${k}`, e.target.checked));
+  });
+
+  // M2bin recompute
+  function recomputeM2bin(){
+    const id = m2binId;
+    const d = chart.data.datasets.find(x=>x.id===id);
+    if (!d) return;
+    const t = Number(thresh.value||50);
+    const m2 = sData.M2 || [];
+    d.data = m2.map((v,i)=>({x:labels[i], y:(v>t?100:0)}));
+    chart.update();
+  }
+  m2binBox.addEventListener("change", e=>toggleDataset(m2binId, e.target.checked));
+  thresh.addEventListener("input", recomputeM2bin);
+
+  // Initial compute if M2 present
+  if (present.has("M2")) recomputeM2bin();
+
+  return row;
+}
+
+(async function (){
+  const res = await fetch("data.json?t="+Date.now(), {cache:"no-store"});
+  if (!res.ok){ document.getElementById("charts").textContent = "Failed to load data.json"; return; }
+  const {labels, symbols, meta} = await res.json();
+  const last = labels && labels.length ? labels[labels.length-1] : null;
+  if (last){ document.getElementById("last").textContent = "Last uploaded (UTC): "+ last; }
+
+  const host = document.getElementById("charts");
+  Object.entries(symbols).forEach(([sym, sData])=>{
+    host.append(buildChartBlock(sym, meta||{}, sData, labels));
+  });
+})().catch(err=>{
+  console.error(err);
+  document.getElementById("charts").textContent = "Error: "+err;
+});
+</script>
+</body>
+</html>
