@@ -1,6 +1,6 @@
 <!doctype html>
 <meta charset="utf-8">
-<title>Price & Strong Buy models</title>
+<title>Price & Strong Buy models — 48h</title>
 <style>
   body{font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;margin:20px;}
   .wrap{max-width:1100px;margin:0 auto}
@@ -9,90 +9,109 @@
   label{display:flex;align-items:center;gap:6px;font-size:13px}
   canvas{width:100%;height:320px}
   small{color:#666}
+  #loading{position:fixed;top:12px;right:12px;background:#111;color:#fff;padding:6px 10px;border-radius:8px;
+           box-shadow:0 6px 18px rgba(0,0,0,.2);font-size:12px;opacity:.9}
 </style>
 <div class="wrap">
-  <h2>Price & Strong Buy score (last 12 hours)</h2>
-  <div class="row"><small>Left axis: price. Right axis: score (0–100). Hourly labels; 15‑min ticks.</small></div>
+  <h2>Price & Strong Buy score (last 48 hours)</h2>
+  <div class="row"><small>Left axis: price. Right axis: score (0–100). Hourly labels; 15‑minute ticks.</small></div>
+  <div class="row"><small id="lastUpdated">Last updated: —</small></div>
   <div id="charts"></div>
 </div>
+<div id="loading">Loading data…</div>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
 <script>
-async function load() {
-  const res = await fetch('data.json?v=' + Date.now(), {cache:'no-store'});
-  const data = await res.json();
-  const root = document.getElementById('charts');
-
-  const colors = {
-    price: '#1f77b4',
-    M1: '#2ca02c',  // green
-    M2: '#d62728',  // red
-    M3: '#9467bd',  // purple
-    M4: '#ff7f0e',  // orange
-    M5: '#17becf'   // cyan
-  };
-
-  for (const [sym, rec] of Object.entries(data.symbols)) {
-    const card = document.createElement('div'); card.className='card';
-    const title = document.createElement('div');
-    title.innerHTML = `<b>${sym}</b>`;
-    const controls = document.createElement('div'); controls.className='row';
-    const c = document.createElement('canvas');
-
-    // model toggles
-    const toggles = ['M1','M2','M3','M4','M5'];
-    const active = {M1:false, M2:true, M3:false, M4:false, M5:false}; // default show M2 only
-
-    toggles.forEach(k => {
-      const cb = document.createElement('input'); cb.type='checkbox'; cb.checked=!!active[k];
-      cb.id = sym+'_'+k;
-      const lab = document.createElement('label'); lab.htmlFor = cb.id;
-      lab.style.color = colors[k]; lab.appendChild(cb); lab.append(` ${k}`);
-      controls.appendChild(lab);
-      cb.addEventListener('change', () => update());
-    });
-
-    card.appendChild(title);
-    card.appendChild(controls);
-    card.appendChild(c);
-    root.appendChild(card);
-
-    const ctx = c.getContext('2d');
-    const labels = data.labels.map(s => new Date(s));
-    const chart = new Chart(ctx, {
-      type: 'line',
-      data: {labels, datasets: []},
-      options: {
-        responsive:true,
-        interaction:{mode:'nearest',intersect:false},
-        plugins:{
-          legend:{display:false}
-        },
-        scales:{
-          x:{type:'time', time:{tooltipFormat:'HH:mm', displayFormats:{minute:'HH:mm'}},
-             ticks:{autoSkip:true, maxTicksLimit:25}},
-          y:{position:'left', title:{display:false}},
-          y1:{position:'right', min:0, max:100, grid:{drawOnChartArea:false}}
-        }
-      }
-    });
-
-    function update(){
-      const ds = [];
-      ds.push({label:sym+' price', data: rec.close, borderColor:colors.price, backgroundColor:colors.price,
-               yAxisID:'y', tension:0.25, pointRadius:0});
-      for (const k of toggles) {
-        if (document.getElementById(sym+'_'+k).checked) {
-          ds.push({label:k, data: (rec.scores && rec.scores[k]) ? rec.scores[k] : rec.score,
-                   borderColor:colors[k], backgroundColor:colors[k], yAxisID:'y1',
-                   tension:0.25, pointRadius:0, borderDash: k==='M2' ? [6,4] : undefined});
-        }
-      }
-      chart.data.datasets = ds;
-      chart.update('none');
+async function fetchWithRetry(url, tries=3, timeoutMs=9000){
+  for(let i=0;i<tries;i++){
+    try{
+      const ctl = new AbortController();
+      const to = setTimeout(()=>ctl.abort(), timeoutMs);
+      const res = await fetch(url, {cache:'no-store', signal: ctl.signal});
+      clearTimeout(to);
+      if (!res.ok) throw new Error('HTTP '+res.status);
+      return await res.json();
+    }catch(e){
+      if (i===tries-1) throw e;
+      await new Promise(r=>setTimeout(r, 1200));
     }
-    update();
   }
 }
-load();
+
+(async function(){
+  try{
+    const data = await fetchWithRetry('data.json?t=' + Date.now());
+    document.getElementById('loading').style.display='none';
+
+    const labels = data.labels.map(s => new Date(s));
+    const last = data.labels[data.labels.length-1] || '';
+    if (last) document.getElementById('lastUpdated').textContent = 'Last updated (UTC): ' + last;
+
+    const root = document.getElementById('charts');
+    const colors = {
+      price: '#1f77b4',
+      M1: '#2ca02c', M2: '#d62728', M3: '#9467bd', M4: '#ff7f0e', M5: '#17becf'
+    };
+
+    for (const [sym, rec] of Object.entries(data.symbols)) {
+      const card = document.createElement('div'); card.className='card';
+      const title = document.createElement('div'); title.innerHTML = `<b>${sym}</b>`;
+      const controls = document.createElement('div'); controls.className='row';
+      const c = document.createElement('canvas');
+
+      const toggles = ['M1','M2','M3','M4','M5'];
+      const active = {M1:false, M2:true, M3:false, M4:false, M5:false};
+      toggles.forEach(k => {
+        const cb = document.createElement('input'); cb.type='checkbox'; cb.checked=!!active[k]; cb.id = sym+'_'+k;
+        const lab = document.createElement('label'); lab.htmlFor = cb.id;
+        lab.style.color = colors[k]; lab.appendChild(cb); lab.append(` ${k}`);
+        controls.appendChild(lab);
+        cb.addEventListener('change', () => update());
+      });
+
+      card.appendChild(title); card.appendChild(controls); card.appendChild(c);
+      root.appendChild(card);
+
+      const ctx = c.getContext('2d');
+      const chart = new Chart(ctx, {
+        type: 'line',
+        data: {labels, datasets: []},
+        options: {
+          responsive:true,
+          interaction:{mode:'nearest',intersect:false},
+          plugins:{legend:{display:false}},
+          scales:{
+            x:{type:'time', time:{tooltipFormat:'MMM d HH:mm', displayFormats:{minute:'HH:mm', hour:'HH:mm'}},
+               ticks:{autoSkip:true, maxTicksLimit:37}},
+            y:{position:'left'},
+            y1:{position:'right', min:0, max:100, grid:{drawOnChartArea:false}}
+          }
+        }
+      });
+
+      function update(){
+        const ds = [];
+        ds.push({label:sym+' price', data: rec.close, borderColor:colors.price, backgroundColor:colors.price,
+                 yAxisID:'y', tension:0.25, pointRadius:0});
+        for (const k of toggles) {
+          const cb = document.getElementById(sym+'_'+k);
+          if (cb && cb.checked) {
+            const series = (rec.scores && rec.scores[k]) ? rec.scores[k] : rec.score;
+            ds.push({label:k, data: series, borderColor:colors[k], backgroundColor:colors[k],
+                     yAxisID:'y1', tension:0.25, pointRadius:0, borderDash: k==='M2' ? [6,4] : undefined});
+          }
+        }
+        chart.data.datasets = ds;
+        chart.update('none');
+      }
+      update();
+    }
+  }catch(e){
+    const box = document.getElementById('loading');
+    box.textContent = 'Failed to load (tap to retry)';
+    box.style.cursor = 'pointer';
+    box.onclick = ()=>location.reload();
+    console.error(e);
+  }
+})();
 </script>
