@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>BTC Close (last 12h)</title>
+<title>BTC Close + Strong Buy Score (last 12h)</title>
 <style>
   body{font-family:-apple-system,Helvetica,Arial,sans-serif;margin:24px}
   h2{margin:0 0 12px}
@@ -13,8 +13,8 @@
 </head>
 <body>
   <div id="wrap">
-    <h2>BTC/USDT — Close (last 12 hours)</h2>
-    <small>Data updates when you run the script.</small>
+    <h2>BTC/USDT — Price and Strong Buy score (last 12 hours)</h2>
+    <small>Left axis: price. Right axis: Strong Buy score (0–100).</small>
     <canvas id="c"></canvas>
   </div>
 
@@ -22,12 +22,12 @@
   <script>
   (function(){
     'use strict';
-    // super simple: fetch JSON and plot; category x-axis (no date adapter needed)
     fetch('btc.json?t=' + Date.now(), {cache:'no-store'})
       .then(function(r){ return r.json(); })
       .then(function(rows){
         var labels = rows.map(function(p){ return p.t; });
-        var data   = rows.map(function(p){ return p.close; });
+        var price  = rows.map(function(p){ return p.close; });
+        var score  = rows.map(function(p){ return p.score; });
 
         var ctx = document.getElementById('c').getContext('2d');
         new Chart(ctx, {
@@ -36,9 +36,19 @@
             labels: labels,
             datasets: [{
               label: 'BTC/USDT close',
-              data: data,
+              yAxisID: 'price',
+              data: price,
               borderColor: '#1f77b4',
               backgroundColor: '#1f77b4',
+              pointRadius: 0,
+              tension: 0.25,
+              spanGaps: true
+            },{
+              label: 'Strong Buy score',
+              yAxisID: 'score',
+              data: score,
+              borderColor: '#d62728',
+              backgroundColor: '#d62728',
               pointRadius: 0,
               tension: 0.25,
               spanGaps: true
@@ -47,9 +57,20 @@
           options: {
             responsive: true,
             scales: {
-              x: {ticks: {maxTicksLimit: 25}},   // keep it readable
-              y: {beginAtZero: false}
-            }
+              x: { ticks: { maxTicksLimit: 25 } },
+              price: {
+                type: 'linear',
+                position: 'left'
+              },
+              score: {
+                type: 'linear',
+                position: 'right',
+                min: 0,
+                max: 100,
+                grid: { drawOnChartArea: false }  // keep grid tidy
+              }
+            },
+            interaction: { mode: 'nearest', intersect: false }
           }
         });
       })
