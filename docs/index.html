@@ -1,133 +1,98 @@
 <!doctype html>
-<html>
-<head>
 <meta charset="utf-8">
-<title>Price & Strong Buy score (last 12h)</title>
+<title>Price & Strong Buy models</title>
 <style>
-  body{font-family:-apple-system,Helvetica,Arial,sans-serif;margin:24px}
-  h2{margin:0 0 6px}
-  h3{margin:24px 0 6px}
-  #wrap{max-width:1120px;margin:0 auto}
-  .meta{color:#444;margin:0 0 14px}
-  .card{margin:18px 0;padding:12px 10px;border:1px solid #eee;border-radius:10px}
-  canvas{width:100%;height:420px}
+  body{font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;margin:20px;}
+  .wrap{max-width:1100px;margin:0 auto}
+  .card{margin:22px 0;padding:12px 16px;border:1px solid #e5e5e5;border-radius:12px}
+  .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:6px 0 12px}
+  label{display:flex;align-items:center;gap:6px;font-size:13px}
+  canvas{width:100%;height:320px}
   small{color:#666}
-  table{border-collapse:collapse;width:100%;margin-top:8px;font-size:13px}
-  th,td{border:1px solid #eee;padding:6px;text-align:left}
-  th{background:#fafafa}
 </style>
-</head>
-<body>
-  <div id="wrap">
-    <h2>Price & Strong Buy score (last 12 hours)</h2>
-    <div class="meta">
-      Data ends at <b id="endLocal"></b> (<span id="endUtc"></span> UTC).
-      <br/><small>Left axis: price. Right axis: score (0–100). Hourly labels; 15-min ticks. Vertical line marks "Now".</small>
-    </div>
-    <div id="charts"></div>
-  </div>
+<div class="wrap">
+  <h2>Price & Strong Buy score (last 12 hours)</h2>
+  <div class="row"><small>Left axis: price. Right axis: score (0–100). Hourly labels; 15‑min ticks.</small></div>
+  <div id="charts"></div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+<script>
+async function load() {
+  const res = await fetch('data.json?v=' + Date.now(), {cache:'no-store'});
+  const data = await res.json();
+  const root = document.getElementById('charts');
 
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
-  <script>
-  (function() {
-    'use strict';
-    const SYMS = ["BTC/USDT", "ETH/USDT", "ONDO/USDT"];
-    const END_ISO = "2025-09-10T17:45:00Z";
-    const palette = ['#1f77b4','#ff7f0e','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf'];
+  const colors = {
+    price: '#1f77b4',
+    M1: '#2ca02c',  // green
+    M2: '#d62728',  // red
+    M3: '#9467bd',  // purple
+    M4: '#ff7f0e',  // orange
+    M5: '#17becf'   // cyan
+  };
 
-    // Banner
-    const end = new Date(END_ISO);
-    document.getElementById('endUtc').textContent = END_ISO.replace('T',' ').replace('Z','Z');
-    document.getElementById('endLocal').textContent = end.toLocaleString();
+  for (const [sym, rec] of Object.entries(data.symbols)) {
+    const card = document.createElement('div'); card.className='card';
+    const title = document.createElement('div');
+    title.innerHTML = `<b>${sym}</b>`;
+    const controls = document.createElement('div'); controls.className='row';
+    const c = document.createElement('canvas');
 
-    function labelForTick(iso, idx, lastIdx) {
-      const d = new Date(iso);
-      const mm = d.getMinutes();
-      if (idx === lastIdx) return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
-      return (mm === 0) ? d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '';
+    // model toggles
+    const toggles = ['M1','M2','M3','M4','M5'];
+    const active = {M1:false, M2:true, M3:false, M4:false, M5:false}; // default show M2 only
+
+    toggles.forEach(k => {
+      const cb = document.createElement('input'); cb.type='checkbox'; cb.checked=!!active[k];
+      cb.id = sym+'_'+k;
+      const lab = document.createElement('label'); lab.htmlFor = cb.id;
+      lab.style.color = colors[k]; lab.appendChild(cb); lab.append(` ${k}`);
+      controls.appendChild(lab);
+      cb.addEventListener('change', () => update());
+    });
+
+    card.appendChild(title);
+    card.appendChild(controls);
+    card.appendChild(c);
+    root.appendChild(card);
+
+    const ctx = c.getContext('2d');
+    const labels = data.labels.map(s => new Date(s));
+    const chart = new Chart(ctx, {
+      type: 'line',
+      data: {labels, datasets: []},
+      options: {
+        responsive:true,
+        interaction:{mode:'nearest',intersect:false},
+        plugins:{
+          legend:{display:false}
+        },
+        scales:{
+          x:{type:'time', time:{tooltipFormat:'HH:mm', displayFormats:{minute:'HH:mm'}},
+             ticks:{autoSkip:true, maxTicksLimit:25}},
+          y:{position:'left', title:{display:false}},
+          y1:{position:'right', min:0, max:100, grid:{drawOnChartArea:false}}
+        }
+      }
+    });
+
+    function update(){
+      const ds = [];
+      ds.push({label:sym+' price', data: rec.close, borderColor:colors.price, backgroundColor:colors.price,
+               yAxisID:'y', tension:0.25, pointRadius:0});
+      for (const k of toggles) {
+        if (document.getElementById(sym+'_'+k).checked) {
+          ds.push({label:k, data: (rec.scores && rec.scores[k]) ? rec.scores[k] : rec.score,
+                   borderColor:colors[k], backgroundColor:colors[k], yAxisID:'y1',
+                   tension:0.25, pointRadius:0, borderDash: k==='M2' ? [6,4] : undefined});
+        }
+      }
+      chart.data.datasets = ds;
+      chart.update('none');
     }
-
-    function makeCard(sym){
-      const card = document.createElement('div');
-      card.className = 'card';
-      const h = document.createElement('h3');
-      h.textContent = sym;
-      const c = document.createElement('canvas');
-      c.id = 'c_' + sym.replace(/[^A-Za-z0-9]/g,'_');
-      const t = document.createElement('div');
-      t.id = 'tab_' + sym.replace(/[^A-Za-z0-9]/g,'_');
-      card.appendChild(h);
-      card.appendChild(c);
-      card.appendChild(t);
-      document.getElementById('charts').appendChild(card);
-      return [c.getContext('2d'), t];
-    }
-
-    fetch('data.json?t=' + Date.now(), {cache:'no-store'})
-      .then(r => r.json())
-      .then(({labels, symbols, meta, signals}) => {
-        const lastLabel = labels[labels.length-1];
-        SYMS.forEach((sym, i) => {
-          const [ctx, tab] = makeCard(sym);
-          const s = symbols[sym] || {close: [], score: []};
-          const price = s.close || [];
-          const score = s.score || [];
-
-          new Chart(ctx, {
-            type: 'line',
-            data: {
-              labels: labels,
-              datasets: [
-                { label: sym + ' price', yAxisID: 'price', data: price,
-                   borderColor: palette[i % palette.length], backgroundColor: palette[i % palette.length],
-                   pointRadius: 0, tension: 0.25, spanGaps: true },
-                { label: sym + ' score', yAxisID: 'score', data: score,
-                   borderColor: '#d62728', backgroundColor: '#d62728',
-                   borderDash: [6,4], pointRadius: 0, tension: 0.25, spanGaps: true }
-              ]
-            },
-            options: {
-              responsive: true, animation: false, interaction: {mode: 'nearest', intersect: false},
-              scales: {
-                x: {
-                  type: 'category',
-                  ticks: { autoSkip: false, maxRotation: 0,
-                    callback: (v, idx) => labelForTick(labels[idx], idx, labels.length-1) },
-                  grid: { drawOnChartArea: true, drawTicks: true }
-                },
-                price: { type: 'linear', position: 'left' },
-                score: { type: 'linear', position: 'right', min: 0, max: 100, grid: { drawOnChartArea: false } }
-              },
-              plugins: {
-                annotation: {
-                  annotations: {
-                    nowLine: {
-                      type: 'line', xMin: lastLabel, xMax: lastLabel,
-                      borderColor: '#111', borderWidth: 1.5, borderDash: [2,2],
-                      label: { display: true, content: 'Now', backgroundColor: 'rgba(17,17,17,0.8)',
-                               color:'#fff', position:'start', yAdjust:-8 }
-                    }
-                  }
-                }
-              }
-            }
-          });
-
-          // Signals table
-          const sigs = (signals[sym] || []).slice(-20).reverse(); // latest first, show up to 20
-          if (sigs.length) {
-            let html = '<table><thead><tr><th>Time (local)</th><th>UTC</th><th>Score</th><th>Close</th></tr></thead><tbody>';
-            sigs.forEach(r => {
-              const d = new Date(r.ts);
-              html += `<tr><td>${d.toLocaleString()}</td><td>${r.ts}</td><td>${r.score}</td><td>${r.close}</td></tr>`;
-            });
-            html += '</tbody></table>';
-            tab.innerHTML = html;
-          }
-        });
-      })
-      .catch(e => console.error(e));
-  })();</script>
-</body>
-</html>
+    update();
+  }
+}
+load();
+</script>
