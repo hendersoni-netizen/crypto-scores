@@ -32,30 +32,25 @@ UI_INTERVAL_MINUTES = 15       # shown on the page (countdown), not the schedule
 CSV_PATH = Path("docs/buy_scores.csv")
 HTML_PATH = Path("docs/index.html")
 
-# score weights
 W_EMA = 25
 W_BB  = 25
 W_RSI = 25
 W_MACD= 25
 
-# =========================
-# EXCHANGE
-# =========================
 exchange = getattr(ccxt, EXCHANGE_ID)({"enableRateLimit": True})
 
-# =========================
-# UTIL: ISO8601 UTC (no micros) => "...Z"
-# =========================
+# -------------------------
+# Timestamp helpers (strict ISO 'Z')
+# -------------------------
 def iso_utc(dt: datetime) -> str:
-    """Return RFC3339 UTC string with 'Z' and seconds precision."""
-    return dt.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 def iso_utc_now() -> str:
     return iso_utc(datetime.now(timezone.utc))
 
-# =========================
-# INDICATORS
-# =========================
+# -------------------------
+# Indicators
+# -------------------------
 def ema(s: pd.Series, p: int) -> pd.Series:
     return s.ewm(span=p, adjust=False).mean()
 
@@ -79,9 +74,9 @@ def bollinger(s: pd.Series, n: int = 20, k: float = 2.0):
     std = s.rolling(n).std(ddof=0)
     return mid - k*std, mid, mid + k*std
 
-# =========================
-# DATA + SCORING
-# =========================
+# -------------------------
+# Data + score
+# -------------------------
 def fetch_df(sym: str, timeframe: str, hours: int) -> pd.DataFrame:
     limit = int(hours*60/15) + 50
     o = exchange.fetch_ohlcv(sym, timeframe=timeframe, limit=limit)
@@ -106,9 +101,9 @@ def score_row(r: pd.Series) -> int:
     if r["macd"] > r["macd_signal"] and r["macd_hist"] > 0: s += W_MACD
     return int(s)
 
-# =========================
-# OUTPUT
-# =========================
+# -------------------------
+# Output
+# -------------------------
 def log_to_csv(records: list[dict]):
     if not records: return
     df = pd.DataFrame.from_records(records)
@@ -128,7 +123,7 @@ def _last_run_iso() -> str:
     return iso_utc_now()
 
 def write_html_from_csv():
-    # server-render a table so first load isn't blank
+    # small pre-rendered table
     initial_table = ""
     try:
         if CSV_PATH.exists():
@@ -142,7 +137,6 @@ def write_html_from_csv():
 
     last_run_iso = _last_run_iso()
 
-    # plain string + token replacement (avoid f-string braces vs JS)
     html = """<!doctype html><html><head><meta charset="utf-8"><title>Buy Scores</title>
 <style>
 body{font-family:-apple-system,Helvetica,Arial,sans-serif;margin:20px}
@@ -167,7 +161,7 @@ canvas{width:100%;height:420px}
   </div>
   <div style="margin:12px 0">
     <canvas id="scoreChart"></canvas>
-    <div class="note">X axis reversed: left = __LOOKBACK__ hours ago, right = now.</div>
+    <div class="note">X axis: left = __LOOKBACK__ hours ago, right = now.</div>
   </div>
   <div id="tableWrap">__TABLE__</div>
 </div>
@@ -179,71 +173,102 @@ const LOOKBACK_HOURS = __LOOKBACK__;
 const UI_INTERVAL_MINUTES = __UI_INTERVAL__;
 const FRESH_MS = 10*60*1000;
 
+// elements
 const statusDot=document.getElementById('statusDot');
 const lastRunEl=document.getElementById('lastRun');
 const uptimeEl=document.getElementById('uptime');
 const countdownEl=document.getElementById('countdown');
 
+// chart
 const ctx=document.getElementById('scoreChart').getContext('2d');
 const chart=new Chart(ctx,{type:'line',data:{labels:[],datasets:[]},
   options:{responsive:true,interaction:{mode:'nearest',intersect:false},
     plugins:{legend:{position:'top'},title:{display:true,text:'Strong Buy Score (0–100) — last '+LOOKBACK_HOURS+' hours'}},
-    scales:{x:{type:'time',reverse:true,time:{tooltipFormat:'HH:mm',displayFormats:{minute:'HH:mm'}},ticks:{autoSkip:true,maxTicksLimit:25}},
+    scales:{x:{type:'time',time:{tooltipFormat:'HH:mm',displayFormats:{minute:'HH:mm'}},ticks:{autoSkip:true,maxTicksLimit:25}},
             y:{min:0,max:100,ticks:{stepSize:20}}}});
 
 // helpers
-function parseCSV(t){const L=t.trim().split(/\\r?\\n/),H=L.shift().split(',');return L.map(l=>{const C=l.split(','),o={};H.forEach((h,i)=>o[h]=C[i]);return o;});}
-function fmt(ms){if(ms<0)ms=0;const s=Math.floor(ms/1000),h=String(Math.floor(s/3600)).padStart(2,'0'),m=String(Math.floor(s%3600/60)).padStart(2,'0'),x=String(s%60).padStart(2,'0');return `${h}:${m}:${x}`;}
-function floor15(d){const S=900000;return new Date(Math.floor(d.getTime()/S)*S);} // 15-min bucket
-function nextCountdown(){const S=900000;const n=new Date(Math.ceil(Date.now()/S)*S);return n-Date.now();}
+const log=(...a)=>{ try{console.log(...a);}catch(_){} };
 
-function renderTable(rows){
-  const cols=["timestamp_utc","symbol","score","close","ema20","ema50","rsi","macd","macd_signal","macd_hist","bb_low","bb_mid","bb_high"];
-  let h='<table><thead><tr>'+cols.map(c=>'<th>'+c+'</th>').join('')+'</tr></thead><tbody>';
-  rows.forEach(r=>{h+='<tr>'+cols.map(c=>'<td>'+(r[c]??'')+'</td>').join('')+'</tr>';});
-  h+='</tbody></table>'; document.getElementById('tableWrap').innerHTML=h;
+function parseCSV(t){
+  const L=t.trim().split(/\\r?\\n/); if(!L.length) return [];
+  const H=L.shift().split(',');
+  return L.map(line=>{
+    const C=line.split(',');
+    const o={}; H.forEach((h,i)=>o[h]=C[i]);
+    return o;
+  });
 }
+function fmt(ms){
+  if(!Number.isFinite(ms)) return '—';
+  if(ms<0) ms=0;
+  const s=Math.floor(ms/1000);
+  const h=String(Math.floor(s/3600)).padStart(2,'0');
+  const m=String(Math.floor((s%3600)/60)).padStart(2,'0');
+  const x=String(s%60).padStart(2,'0');
+  return `${h}:${m}:${x}`;
+}
+function floor15(d){ const S=900000; return new Date(Math.floor(d.getTime()/S)*S); }
+function nextCountdown(){ const S=900000; const n=new Date(Math.ceil(Date.now()/S)*S); return n-Date.now(); }
 
-function buildTimeline(lastUtc,hours){
-  const end=new Date(lastUtc); const start=new Date(end.getTime()-hours*3600000);
-  const out=[]; const step=900000; const alignedEnd=floor15(end);
-  for(let t=floor15(start); t<=alignedEnd; t=new Date(t.getTime()+step)) out.push(new Date(t).toISOString());
+function buildTimeline(lastMs,hours){
+  const end=new Date(lastMs); const start=new Date(end.getTime()-hours*3600000);
+  const out=[]; const step=900000; // 15m
+  for(let t=floor15(start); t<=floor15(end); t=new Date(t.getTime()+step)) out.push(new Date(t).toISOString());
   return out;
 }
 
 function seriesFromRows(rows,timeline){
-  const bySym={}, syms=new Set(rows.map(r=>r.symbol)); syms.forEach(s=>bySym[s]=new Array(timeline.length).fill(null));
+  const bySym={}; const syms=[...new Set(rows.map(r=>r.symbol))];
+  syms.forEach(s=>bySym[s]=new Array(timeline.length).fill(null));
   const idx=new Map(timeline.map((t,i)=>[t,i]));
-  rows.sort((a,b)=>new Date(a.timestamp_utc)-new Date(b.timestamp_utc));
+  rows.sort((a,b)=>Date.parse(a.timestamp_utc)-Date.parse(b.timestamp_utc));
   rows.forEach(r=>{
-    // timestamps are "...Z" and parse everywhere
-    const b=floor15(new Date(r.timestamp_utc)).toISOString();
-    const i=idx.get(b); if(i===undefined) return;
-    const v=parseInt(r.score,10); if(!Number.isNaN(v)) bySym[r.symbol][i]=v;
+    const tsMs=Date.parse(r.timestamp_utc);
+    if(!Number.isFinite(tsMs)) return;
+    const bucketIso=floor15(new Date(tsMs)).toISOString();
+    const i=idx.get(bucketIso); if(i===undefined) return;
+    const v=parseInt(r.score,10); if(Number.isFinite(v)) bySym[r.symbol][i]=v;
   });
   return bySym;
 }
 
 async function loadAndUpdate(){
   try{
-    const res=await fetch('buy_scores.csv?t='+Date.now(),{cache:'no-store'}); if(!res.ok) throw new Error(res.status);
-    const rows=parseCSV(await res.text()); if(!rows.length) return;
+    const res=await fetch('buy_scores.csv?t='+Date.now(),{cache:'no-store'});
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const text=await res.text();
+    const rows=parseCSV(text);
+    if(!rows.length) return log('No rows');
 
-    const last=rows.reduce((a,r)=>a>r.timestamp_utc?a:r.timestamp_utc,rows[0].timestamp_utc);
-    lastRunEl.textContent=last;
-    const ms=Date.now()-new Date(last).getTime();
+    // robust "last run"
+    const times=rows.map(r=>Date.parse(r.timestamp_utc)).filter(Number.isFinite);
+    if(!times.length) throw new Error('No parseable timestamps');
+    const lastMs=Math.max(...times);
+    const lastIso=new Date(lastMs).toISOString();
+    lastRunEl.textContent=lastIso;
+
+    // status + timers
+    const ms=Date.now()-lastMs;
     const fresh=ms<FRESH_MS;
     statusDot.style.background=fresh?'#22c55e':'#ef4444';
     statusDot.style.boxShadow=fresh?'0 0 6px #22c55e':'0 0 6px #ef4444';
     uptimeEl.textContent=fmt(ms);
     countdownEl.textContent=fmt(nextCountdown());
 
+    // table (latest per symbol)
     const latest=new Map();
-    rows.slice().sort((a,b)=>new Date(b.timestamp_utc)-new Date(a.timestamp_utc))
+    rows.slice().sort((a,b)=>Date.parse(b.timestamp_utc)-Date.parse(a.timestamp_utc))
         .forEach(r=>{ if(!latest.has(r.symbol)) latest.set(r.symbol,r); });
-    renderTable(Array.from(latest.values()));
+    (function renderTable(){
+      const cols=["timestamp_utc","symbol","score","close","ema20","ema50","rsi","macd","macd_signal","macd_hist","bb_low","bb_mid","bb_high"];
+      let h='<table><thead><tr>'+cols.map(c=>'<th>'+c+'</th>').join('')+'</tr></thead><tbody>';
+      Array.from(latest.values()).forEach(r=>{ h+='<tr>'+cols.map(c=>'<td>'+(r[c]??'')+'</td>').join('')+'</tr>'; });
+      h+='</tbody></table>'; document.getElementById('tableWrap').innerHTML=h;
+    })();
 
-    const tl=buildTimeline(last, LOOKBACK_HOURS);
+    // chart series
+    const tl=buildTimeline(lastMs, LOOKBACK_HOURS);
     const series=seriesFromRows(rows, tl);
     chart.data.labels=tl;
 
@@ -260,12 +285,15 @@ async function loadAndUpdate(){
       pointHoverRadius:5
     }));
     chart.update('none');
-  }catch(e){ console.error(e); }
+    log('Updated chart. labels:', tl.length, 'datasets:', syms);
+  }catch(e){
+    console.error('loadAndUpdate error:', e);
+  }
 }
 
 loadAndUpdate();
-setInterval(()=>{const t=new Date(lastRunEl.textContent.trim()); if(!isNaN(t)){const ms=Date.now()-t.getTime(); uptimeEl.textContent=fmt(ms); countdownEl.textContent=fmt(nextCountdown());}},1000);
-setInterval(loadAndUpdate,30000); // poll every 30s
+setInterval(()=>{ const s=Date.parse(lastRunEl.textContent.trim()); if(Number.isFinite(s)){ const ms=Date.now()-s; uptimeEl.textContent=fmt(ms); countdownEl.textContent=fmt(nextCountdown()); }}, 1000);
+setInterval(loadAndUpdate, 30000);
 </script></body></html>"""
 
     html = (html
@@ -284,9 +312,6 @@ def git_push():
     except Exception as e:
         print("⚠️ Git push failed:", e)
 
-# =========================
-# RUN ONCE
-# =========================
 def run_once():
     now = iso_utc_now()
     rows: list[dict] = []
