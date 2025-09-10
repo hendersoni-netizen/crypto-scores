@@ -1,214 +1,176 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Price & M-signals (48h) — fixed size + reliable toggles</title>
-<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-<style>
-  :root {
-    --bg: #f6f7f9;
-    --card: #fff;
-    --ink: #111;
-    --muted: #666;
-    --line: #e5e7eb;
-  }
-  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); font-family: -apple-system, system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
-  .container { max-width: 1200px; margin: 20px auto 80px; padding: 0 16px; }
-  h1 { font-size: 22px; margin: 6px 0 14px; }
-  .note { color: var(--muted); font-size: 13px; margin-bottom: 8px; }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin: 18px auto; }
-  .head { display:flex; align-items:center; gap:12px; flex-wrap: wrap; margin: 6px 0 8px; }
-  .sym { font-weight: 700; letter-spacing: 0.1px; }
-  .controls { display:flex; gap:10px; row-gap: 8px; flex-wrap: wrap; font-size: 13px; }
-  .controls label { display:inline-flex; align-items:center; gap:6px; padding:6px 8px; border:1px solid var(--line); border-radius: 8px; user-select:none; }
-  .controls input[type="checkbox"] { transform: translateY(1px); }
-  .controls input[type="number"] { width: 64px; padding:6px 8px; border:1px solid var(--line); border-radius:8px; }
-  .fixed-canvas { width: 100% !important; height: 360px !important; display: block; }
-  .legend { color: var(--muted); font-size: 12px; margin-top: 6px; }
-</style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Price & M-signals (48h) — fixed size + reliable toggles</title>
+  <style>
+    :root{--card-w:1120px;--canvas-h:360px;--muted:#6b7280}
+    body{font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin:24px; color:#111}
+    h1{font-size:20px;margin:0 0 12px 0}
+    .meta{color:var(--muted);font-size:12px;margin-bottom:14px}
+    .card{max-width:var(--card-w); border:1px solid #e5e7eb; border-radius:12px; padding:12px 12px 18px 12px; margin:16px 0; box-shadow:0 1px 2px rgba(0,0,0,.03)}
+    .row{display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:6px 6px 10px 6px}
+    .row label{font-size:13px; color:#111; display:inline-flex; align-items:center; gap:6px; padding:3px 8px; border:1px solid #e5e7eb; border-radius:999px}
+    .row input[type="number"]{width:64px; padding:3px 6px; border:1px solid #e5e7eb; border-radius:8px}
+    canvas.fixed{width:100% !important; height:var(--canvas-h) !important; display:block;}
+    .help{color:var(--muted);font-size:12px;margin-top:8px}
+    .legend{display:flex; gap:16px; align-items:center; font-size:12px; margin:4px 6px}
+    .dot{width:12px;height:4px;border-radius:2px;display:inline-block}
+    .price{background:#2563eb}
+    .mline{background:#d97706}
+  </style>
+  <!-- Chart.js + date-fns adapter -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
 </head>
 <body>
-<div class="container">
   <h1>Price & M-signals (48h) — fixed size + reliable toggles</h1>
-  <div class="note">Left axis: price. Right axis: score (0–100). Hourly labels; 15-minute ticks.</div>
-  <div id="charts"></div>
-</div>
+  <div class="meta">Left axis: price. Right axis: score (0–100). Hourly labels; 15‑minute ticks. Dashed black = M2bin (0/100) using threshold (not used in this build).<br>
+  Last uploaded (UTC): <span id="last"></span></div>
 
-<!-- Chart.js + time adapter -->
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
-<script src="./vendor/time-adapter-guard.js"></script>
+  <div id="root"></div>
+
 <script>
-const PALETTE = [
-  "#2563eb","#dc2626","#16a34a","#9333ea","#0891b2",
-  "#ea580c","#4f46e5","#059669","#db2777","#6d28d9",
-  "#d97706","#0e7490"
-];
-const MODELS = ["M1","M2","M3","M4","M5","M6","M7","M8","M9","M10"];
+(async function(){
+  const root = document.getElementById('root');
+  const lastEl = document.getElementById('last');
 
-function el(type, attrs={}, children=[]) {
-  const n = document.createElement(type);
-  for (const [k,v] of Object.entries(attrs)) {
-    if (k === "class") n.className = v;
-    else if (k === "text") n.textContent = v;
-    else n.setAttribute(k,v);
+  // Make sure the date adapter is available
+  if (!Chart._adapters._date || !Chart._adapters._date.adapters?.date) {
+    console.warn('Chart.js date adapter missing – time axis will fail.');
+  } else {
+    console.log('Chart.js date adapter OK.');
   }
-  for (const c of children) n.appendChild(c);
-  return n;
-}
 
-function makeCard(sym, onToggle) {
-  const card = el("div", {class:"card"});
-  const head = el("div", {class:"head"});
-  head.appendChild(el("div", {class:"sym", text:sym}));
+  async function load() {
+    // IMPORTANT: since this file lives in /docs/, the data is at ./data.json
+    const res = await fetch('data.json?t=' + Date.now(), {cache:'no-store'});
+    if (!res.ok) throw new Error('Fetch failed: ' + res.status);
+    const d = await res.json();
+    return d;
+  }
 
-  const controls = el("div", {class:"controls"});
-  // price checkbox (on by default)
-  controls.appendChild(controlCheckbox(sym, "price", true, onToggle));
+  function firstDefined(a){ return a != null ? a : ''; }
 
-  // M1..M10 (off by default)
-  for (const m of MODELS) controls.appendChild(controlCheckbox(sym, m, false, onToggle));
+  function palette(n){
+    const colors = [
+      '#2563eb','#16a34a','#d97706','#db2777','#0891b2',
+      '#7c3aed','#dc2626','#0ea5e9','#f59e0b','#059669'
+    ];
+    return colors[n % colors.length];
+  }
 
-  head.appendChild(controls);
-  card.appendChild(head);
+  function makeCard(sym, series, labels){
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML = \`
+      <div class="row">
+        <strong style="margin-right:10px">\${sym}</strong>
+        <label><input type="checkbox" data-k="price" checked> price</label>
+        \${Array.from({length:10}).map((_,i)=>\`<label><input type="checkbox" data-k="M\${i+1}"> M\${i+1}</label>\`).join('')}
+      </div>
+      <div class="legend">
+        <span class="dot price"></span> <span>price</span>
+        <span class="dot mline" style="background:#666"></span> <span>M-lines (0–100)</span>
+      </div>
+      <canvas class="fixed"></canvas>
+      <div class="help">Toggle lines above. Right axis is fixed at 0–100 for models; left axis is price.</div>
+    \`;
 
-  // canvas
-  const canvas = el("canvas", {class:"fixed-canvas"});
-  card.appendChild(canvas);
-
-  // tiny legend line
-  const legend = el("div", {class:"legend", text:"Toggle lines above. Score axis is fixed at 0–100."});
-  card.appendChild(legend);
-
-  return {card, canvas};
-}
-
-function controlCheckbox(sym, key, checked, onToggle) {
-  const id = `${sym.replace(/[^A-Za-z0-9]/g,"_")}_${key}`;
-  const input = el("input", {type:"checkbox", id});
-  input.checked = checked;
-  input.addEventListener("change", () => onToggle(sym, key, input.checked));
-  const label = el("label");
-  const spanTxt = (key === "price") ? "price" : key;
-  label.appendChild(input);
-  label.appendChild(el("span", {text: spanTxt}));
-  return label;
-}
-
-function buildChart(ctx, labels, series, sym) {
-  const price = series.close || [];
-  const datasets = [];
-  // price
-  datasets.push({
-    label: sym + " price",
-    xAxisID: "x",
-    yAxisID: "yPrice",
-    data: price,
-    borderColor: PALETTE[0],
-    backgroundColor: PALETTE[0],
-    borderWidth: 2,
-    pointRadius: 0,
-    tension: 0.25,
-    spanGaps: true,
-    hidden: false
-  });
-
-  // models M1..M10 (start hidden)
-  MODELS.forEach((m, i) => {
-    const arr = series[m] || [];
-    datasets.push({
-      label: m,
-      xAxisID: "x",
-      yAxisID: "yScore",
-      data: arr,
-      borderColor: PALETTE[(i+1)%PALETTE.length],
-      backgroundColor: PALETTE[(i+1)%PALETTE.length],
-      borderWidth: 1.5,
-      pointRadius: 0,
+    const ctx = card.querySelector('canvas').getContext('2d');
+    const ds = [];
+    // price
+    ds.push({
+      label: sym + ' price',
+      yAxisID: 'price',
+      data: series.price || series.close || [],
+      borderColor: '#2563eb',
+      backgroundColor: '#2563eb',
       tension: 0.25,
-      spanGaps: true,
-      hidden: true
+      pointRadius: 0,
     });
-  });
+    // collect M1..M10 that actually exist & align length
+    for (let i=1;i<=10;i++){
+      const key = 'M'+i;
+      if (Array.isArray(series[key]) && series[key].length === labels.length){
+        ds.push({
+          label: key,
+          yAxisID: 'score',
+          data: series[key],
+          borderColor: palette(i),
+          backgroundColor: palette(i),
+          tension: 0.25,
+          pointRadius: 0,
+          hidden: true
+        });
+      }
+    }
 
-  const chart = new Chart(ctx, {
-    type: "line",
-    data: { labels, datasets },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false, // we control height via CSS
-      animation: false,
-      parsing: false,
-      interaction: { mode: "nearest", intersect: false },
-      plugins: {
-        legend: { display: false },
-        tooltip: { enabled: true }
-      },
-      scales: {
-        x: {
-          type: "time",
-          time: { tooltipFormat: "MMM d, HH:mm", displayFormats: { minute: "HH:mm" } },
-          ticks: { autoSkip: true, maxTicksLimit: 24 }
+    const chart = new Chart(ctx, {
+      type: 'line',
+      data: { labels, datasets: ds },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'nearest', intersect: false },
+        scales: {
+          x: {
+            type: 'time',
+            time: { tooltipFormat: 'HH:mm', displayFormats: { minute: 'HH:mm' } },
+            ticks: { autoSkip: true, maxRotation: 0 }
+          },
+          price: {
+            position: 'left',
+            grid: { drawOnChartArea: true }
+          },
+          score: {
+            position: 'right',
+            min: 0, max: 100,
+            grid: { drawOnChartArea: false }
+          }
         },
-        yPrice: {
-          type: "linear",
-          position: "left",
-          grid: { drawOnChartArea: true }
-        },
-        yScore: {
-          type: "linear",
-          position: "right",
-          min: 0, max: 100,
-          grid: { drawOnChartArea: false }
+        plugins: {
+          legend: { display: false }
         }
       }
-    }
-  });
-  return chart;
-}
-
-(async function main(){
-  try {
-    const res = await fetch("data.json?t=" + Date.now(), {cache:"no-store"});
-    const d = await res.json();
-    const labels = d.labels || [];
-    const symbols = d.symbols || {};
-    const wrap = document.getElementById("charts");
-
-    const charts = new Map(); // sym => {chart, datasetsIndexMap}
-    function onToggle(sym, key, checked) {
-      const rec = charts.get(sym);
-      if (!rec) return;
-      const { chart, map } = rec;
-      if (key === "price") {
-        chart.data.datasets[ map.price ].hidden = !checked;
-      } else {
-        const idx = map.models[key];
-        if (idx != null) chart.data.datasets[idx].hidden = !checked;
-      }
-      chart.update("none");
-    }
-
-    Object.keys(symbols).forEach((sym, sIdx) => {
-      const series = symbols[sym] || {};
-      const {card, canvas} = makeCard(sym, onToggle);
-      wrap.appendChild(card);
-
-      const ctx = canvas.getContext("2d");
-      const chart = buildChart(ctx, labels, series, sym);
-
-      // cache dataset indexes
-      const map = {
-        price: 0,
-        models: {}
-      };
-      MODELS.forEach((m, i) => map.models[m] = 1 + i); // after price
-      charts.set(sym, {chart, map});
     });
-  } catch (e) {
-    console.error("viewer init failed", e);
-    alert("Failed to load data.json. Check console.");
+
+    // wire toggles
+    card.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const k = cb.getAttribute('data-k');
+        chart.data.datasets.forEach(ds => {
+          if ((k === 'price' && ds.yAxisID === 'price') || ds.label === k){
+            ds.hidden = !cb.checked;
+          }
+        });
+        chart.update('none');
+      });
+    });
+
+    return card;
+  }
+
+  try {
+    const data = await load();
+    lastEl.textContent = firstDefined(data.last_uploaded_utc || data.meta?.last_uploaded_utc || '');
+
+    const labels = data.labels || [];
+    const syms = Object.keys(data.symbols || {});
+
+    if (!labels.length || !syms.length){
+      root.innerHTML = '<div style="color:#b91c1c">No data found in data.json. Ensure it has {labels, symbols} with arrays.</div>';
+      return;
+    }
+
+    syms.forEach(sym => {
+      const series = data.symbols[sym] || {};
+      root.appendChild(makeCard(sym, series, labels));
+    });
+  } catch (e){
+    console.error(e);
+    root.innerHTML = '<div style="color:#b91c1c">Failed to load data.json. Open DevTools → Console for details.</div>';
   }
 })();
 </script>
