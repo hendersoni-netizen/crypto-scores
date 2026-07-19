@@ -1,178 +1,133 @@
 <!doctype html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Price & M-signals (48h) — fixed size + reliable toggles</title>
-  <style>
-    :root{--card-w:1120px;--canvas-h:360px;--muted:#6b7280}
-    body{font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin:24px; color:#111}
-    h1{font-size:20px;margin:0 0 12px 0}
-    .meta{color:var(--muted);font-size:12px;margin-bottom:14px}
-    .card{max-width:var(--card-w); border:1px solid #e5e7eb; border-radius:12px; padding:12px 12px 18px 12px; margin:16px 0; box-shadow:0 1px 2px rgba(0,0,0,.03)}
-    .row{display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:6px 6px 10px 6px}
-    .row label{font-size:13px; color:#111; display:inline-flex; align-items:center; gap:6px; padding:3px 8px; border:1px solid #e5e7eb; border-radius:999px}
-    .row input[type="number"]{width:64px; padding:3px 6px; border:1px solid #e5e7eb; border-radius:8px}
-    canvas.fixed{width:100% !important; height:var(--canvas-h) !important; display:block;}
-    .help{color:var(--muted);font-size:12px;margin-top:8px}
-    .legend{display:flex; gap:16px; align-items:center; font-size:12px; margin:4px 6px}
-    .dot{width:12px;height:4px;border-radius:2px;display:inline-block}
-    .price{background:#2563eb}
-    .mline{background:#d97706}
-  </style>
-  <!-- Chart.js + date-fns adapter -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+<meta charset="utf-8">
+<title>Price & Strong Buy score (last 12h)</title>
+<style>
+  body{font-family:-apple-system,Helvetica,Arial,sans-serif;margin:24px}
+  h2{margin:0 0 6px}
+  h3{margin:24px 0 6px}
+  #wrap{max-width:1120px;margin:0 auto}
+  .meta{color:#444;margin:0 0 14px}
+  .card{margin:18px 0;padding:12px 10px;border:1px solid #eee;border-radius:10px}
+  canvas{width:100%;height:420px}
+  small{color:#666}
+  table{border-collapse:collapse;width:100%;margin-top:8px;font-size:13px}
+  th,td{border:1px solid #eee;padding:6px;text-align:left}
+  th{background:#fafafa}
+</style>
 </head>
 <body>
-  <h1>Price & M-signals (48h) — fixed size + reliable toggles</h1>
-  <div class="meta">Left axis: price. Right axis: score (0–100). Hourly labels; 15‑minute ticks. Dashed black = M2bin (0/100) using threshold (not used in this build).<br>
-  Last uploaded (UTC): <span id="last"></span></div>
+  <div id="wrap">
+    <h2>Price & Strong Buy score (last 12 hours)</h2>
+    <div class="meta">
+      Data ends at <b id="endLocal"></b> (<span id="endUtc"></span> UTC).
+      <br/><small>Left axis: price. Right axis: score (0–100). Hourly labels; 15-min ticks. Vertical line marks "Now".</small>
+    </div>
+    <div id="charts"></div>
+  </div>
 
-  <div id="root"></div>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
+  <script>
+  (function() {
+    'use strict';
+    const SYMS = ["BTC/USDT", "ETH/USDT", "ONDO/USDT"];
+    const END_ISO = "2026-07-19T11:30:00Z";
+    const palette = ['#1f77b4','#ff7f0e','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf'];
 
-<script>
-(async function(){
-  const root = document.getElementById('root');
-  const lastEl = document.getElementById('last');
+    // Banner
+    const end = new Date(END_ISO);
+    document.getElementById('endUtc').textContent = END_ISO.replace('T',' ').replace('Z','Z');
+    document.getElementById('endLocal').textContent = end.toLocaleString();
 
-  // Make sure the date adapter is available
-  if (!Chart._adapters._date || !Chart._adapters._date.adapters?.date) {
-    console.warn('Chart.js date adapter missing – time axis will fail.');
-  } else {
-    console.log('Chart.js date adapter OK.');
-  }
-
-  async function load() {
-    // IMPORTANT: since this file lives in /docs/, the data is at ./data.json
-    const res = await fetch('data.json?t=' + Date.now(), {cache:'no-store'});
-    if (!res.ok) throw new Error('Fetch failed: ' + res.status);
-    const d = await res.json();
-    return d;
-  }
-
-  function firstDefined(a){ return a != null ? a : ''; }
-
-  function palette(n){
-    const colors = [
-      '#2563eb','#16a34a','#d97706','#db2777','#0891b2',
-      '#7c3aed','#dc2626','#0ea5e9','#f59e0b','#059669'
-    ];
-    return colors[n % colors.length];
-  }
-
-  function makeCard(sym, series, labels){
-    const card = document.createElement('div');
-    card.className = 'card';
-    card.innerHTML = \`
-      <div class="row">
-        <strong style="margin-right:10px">\${sym}</strong>
-        <label><input type="checkbox" data-k="price" checked> price</label>
-        \${Array.from({length:10}).map((_,i)=>\`<label><input type="checkbox" data-k="M\${i+1}"> M\${i+1}</label>\`).join('')}
-      </div>
-      <div class="legend">
-        <span class="dot price"></span> <span>price</span>
-        <span class="dot mline" style="background:#666"></span> <span>M-lines (0–100)</span>
-      </div>
-      <canvas class="fixed"></canvas>
-      <div class="help">Toggle lines above. Right axis is fixed at 0–100 for models; left axis is price.</div>
-    \`;
-
-    const ctx = card.querySelector('canvas').getContext('2d');
-    const ds = [];
-    // price
-    ds.push({
-      label: sym + ' price',
-      yAxisID: 'price',
-      data: series.price || series.close || [],
-      borderColor: '#2563eb',
-      backgroundColor: '#2563eb',
-      tension: 0.25,
-      pointRadius: 0,
-    });
-    // collect M1..M10 that actually exist & align length
-    for (let i=1;i<=10;i++){
-      const key = 'M'+i;
-      if (Array.isArray(series[key]) && series[key].length === labels.length){
-        ds.push({
-          label: key,
-          yAxisID: 'score',
-          data: series[key],
-          borderColor: palette(i),
-          backgroundColor: palette(i),
-          tension: 0.25,
-          pointRadius: 0,
-          hidden: true
-        });
-      }
+    function labelForTick(iso, idx, lastIdx) {
+      const d = new Date(iso);
+      const mm = d.getMinutes();
+      if (idx === lastIdx) return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+      return (mm === 0) ? d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '';
     }
 
-    const chart = new Chart(ctx, {
-      type: 'line',
-      data: { labels, datasets: ds },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        interaction: { mode: 'nearest', intersect: false },
-        scales: {
-          x: {
-            type: 'time',
-            time: { tooltipFormat: 'HH:mm', displayFormats: { minute: 'HH:mm' } },
-            ticks: { autoSkip: true, maxRotation: 0 }
-          },
-          price: {
-            position: 'left',
-            grid: { drawOnChartArea: true }
-          },
-          score: {
-            position: 'right',
-            min: 0, max: 100,
-            grid: { drawOnChartArea: false }
-          }
-        },
-        plugins: {
-          legend: { display: false }
-        }
-      }
-    });
-
-    // wire toggles
-    card.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-      cb.addEventListener('change', () => {
-        const k = cb.getAttribute('data-k');
-        chart.data.datasets.forEach(ds => {
-          if ((k === 'price' && ds.yAxisID === 'price') || ds.label === k){
-            ds.hidden = !cb.checked;
-          }
-        });
-        chart.update('none');
-      });
-    });
-
-    return card;
-  }
-
-  try {
-    const data = await load();
-    lastEl.textContent = firstDefined(data.last_uploaded_utc || data.meta?.last_uploaded_utc || '');
-
-    const labels = data.labels || [];
-    const syms = Object.keys(data.symbols || {});
-
-    if (!labels.length || !syms.length){
-      root.innerHTML = '<div style="color:#b91c1c">No data found in data.json. Ensure it has {labels, symbols} with arrays.</div>';
-      return;
+    function makeCard(sym){
+      const card = document.createElement('div');
+      card.className = 'card';
+      const h = document.createElement('h3');
+      h.textContent = sym;
+      const c = document.createElement('canvas');
+      c.id = 'c_' + sym.replace(/[^A-Za-z0-9]/g,'_');
+      const t = document.createElement('div');
+      t.id = 'tab_' + sym.replace(/[^A-Za-z0-9]/g,'_');
+      card.appendChild(h);
+      card.appendChild(c);
+      card.appendChild(t);
+      document.getElementById('charts').appendChild(card);
+      return [c.getContext('2d'), t];
     }
 
-    syms.forEach(sym => {
-      const series = data.symbols[sym] || {};
-      root.appendChild(makeCard(sym, series, labels));
-    });
-  } catch (e){
-    console.error(e);
-    root.innerHTML = '<div style="color:#b91c1c">Failed to load data.json. Open DevTools → Console for details.</div>';
-  }
-})();
-</script>
+    fetch('data.json?t=' + Date.now(), {cache:'no-store'})
+      .then(r => r.json())
+      .then(({labels, symbols, meta, signals}) => {
+        const lastLabel = labels[labels.length-1];
+        SYMS.forEach((sym, i) => {
+          const [ctx, tab] = makeCard(sym);
+          const s = symbols[sym] || {close: [], score: []};
+          const price = s.close || [];
+          const score = s.score || [];
+
+          new Chart(ctx, {
+            type: 'line',
+            data: {
+              labels: labels,
+              datasets: [
+                { label: sym + ' price', yAxisID: 'price', data: price,
+                   borderColor: palette[i % palette.length], backgroundColor: palette[i % palette.length],
+                   pointRadius: 0, tension: 0.25, spanGaps: true },
+                { label: sym + ' score', yAxisID: 'score', data: score,
+                   borderColor: '#d62728', backgroundColor: '#d62728',
+                   borderDash: [6,4], pointRadius: 0, tension: 0.25, spanGaps: true }
+              ]
+            },
+            options: {
+              responsive: true, animation: false, interaction: {mode: 'nearest', intersect: false},
+              scales: {
+                x: {
+                  type: 'category',
+                  ticks: { autoSkip: false, maxRotation: 0,
+                    callback: (v, idx) => labelForTick(labels[idx], idx, labels.length-1) },
+                  grid: { drawOnChartArea: true, drawTicks: true }
+                },
+                price: { type: 'linear', position: 'left' },
+                score: { type: 'linear', position: 'right', min: 0, max: 100, grid: { drawOnChartArea: false } }
+              },
+              plugins: {
+                annotation: {
+                  annotations: {
+                    nowLine: {
+                      type: 'line', xMin: lastLabel, xMax: lastLabel,
+                      borderColor: '#111', borderWidth: 1.5, borderDash: [2,2],
+                      label: { display: true, content: 'Now', backgroundColor: 'rgba(17,17,17,0.8)',
+                               color:'#fff', position:'start', yAdjust:-8 }
+                    }
+                  }
+                }
+              }
+            }
+          });
+
+          // Signals table
+          const sigs = (signals[sym] || []).slice(-20).reverse(); // latest first, show up to 20
+          if (sigs.length) {
+            let html = '<table><thead><tr><th>Time (local)</th><th>UTC</th><th>Score</th><th>Close</th></tr></thead><tbody>';
+            sigs.forEach(r => {
+              const d = new Date(r.ts);
+              html += `<tr><td>${d.toLocaleString()}</td><td>${r.ts}</td><td>${r.score}</td><td>${r.close}</td></tr>`;
+            });
+            html += '</tbody></table>';
+            tab.innerHTML = html;
+          }
+        });
+      })
+      .catch(e => console.error(e));
+  })();</script>
 </body>
 </html>
