@@ -124,8 +124,22 @@
   var word = document.getElementById("word");
   var lang = document.getElementById("lang");
 
+  var unlocked = false;
+  // iOS locks speechSynthesis until it fires once inside a user gesture.
+  // Speak a tiny silent utterance on the very first tap to "unlock" it.
+  function unlock() {
+    if (unlocked || !synth) return;
+    unlocked = true;
+    try {
+      var warm = new SpeechSynthesisUtterance(" ");
+      warm.volume = 0;
+      synth.speak(warm);
+    } catch (e) {}
+  }
+
   function sayNo() {
-    if (!synth) { lang.textContent = "Speech not supported on this browser"; return; }
+    if (!synth) { lang.textContent = "Speech not supported in this browser"; return; }
+    unlock();
     loadVoices();
 
     // Random language, never the same one twice in a row.
@@ -134,16 +148,23 @@
     lastIdx = i;
     var pick = LANGS[i];
 
-    synth.cancel(); // stop anything mid-flight so rapid taps stay snappy
-
     var u = new SpeechSynthesisUtterance(pick.word);
     u.lang = pick.code;
     var v = pickVoice(pick.code);
-    if (v) u.lang = v.lang, u.voice = v;
-    u.rate  = 0.92 + Math.random() * 0.28;  // 0.92–1.20, adds vocal variety
-    u.pitch = 0.85 + Math.random() * 0.6;   // 0.85–1.45
+    if (v) { u.lang = v.lang; u.voice = v; }
+    u.rate   = 0.92 + Math.random() * 0.28;  // 0.92–1.20, adds vocal variety
+    u.pitch  = 0.85 + Math.random() * 0.6;   // 0.85–1.45
     u.volume = 1;
+    u.onerror = function (ev) {
+      if (ev && ev.error && ev.error !== "canceled" && ev.error !== "interrupted") {
+        lang.textContent = pick.name + " — no sound? Check the silent switch 🔇";
+      }
+    };
 
+    // Don't cancel right before speak on iOS — it can swallow the utterance.
+    // Only clear the queue if something is genuinely stuck pending.
+    if (synth.speaking || synth.pending) synth.cancel();
+    try { synth.resume(); } catch (e) {}
     try { synth.speak(u); } catch (e) {}
 
     word.textContent = pick.word;
@@ -154,12 +175,19 @@
     btn.classList.add("pulse");
   }
 
-  // pointerup fires reliably after a real tap on iOS and counts as a user gesture.
-  btn.addEventListener("pointerup", function (e) { e.preventDefault(); sayNo(); });
-  btn.addEventListener("click", function (e) { e.preventDefault(); }); // avoid double-fire
-  // Keyboard access
+  // Fire on the first gesture event we get; guard against double-firing.
+  var busy = false;
+  function trigger(e) {
+    if (e) e.preventDefault();
+    if (busy) return;
+    busy = true;
+    sayNo();
+    setTimeout(function () { busy = false; }, 120);
+  }
+  btn.addEventListener("touchend", trigger, { passive: false });
+  btn.addEventListener("click", trigger);
   btn.addEventListener("keyup", function (e) {
-    if (e.key === "Enter" || e.key === " ") sayNo();
+    if (e.key === "Enter" || e.key === " ") trigger(e);
   });
 })();
 </script>
