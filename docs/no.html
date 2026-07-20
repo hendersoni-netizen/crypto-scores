@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0b0b12">
+<title>No.</title>
+<style>
+  * { -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; }
+  html, body {
+    margin: 0; height: 100%;
+    background: #0b0b12;
+    color: #fff;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+    overscroll-behavior: none;
+    -webkit-user-select: none; user-select: none;
+    touch-action: manipulation;
+  }
+  .stage {
+    position: fixed; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    padding: max(env(safe-area-inset-top), 16px) 16px max(env(safe-area-inset-bottom), 16px);
+    box-sizing: border-box;
+    background:
+      radial-gradient(120% 120% at 50% -10%, #1a1a2e 0%, #0b0b12 55%, #050508 100%);
+  }
+  #btn {
+    appearance: none; border: none; cursor: pointer;
+    width: min(72vw, 320px); aspect-ratio: 1 / 1; border-radius: 50%;
+    font: 700 clamp(38px, 12vw, 78px)/1 -apple-system, BlinkMacSystemFont, sans-serif;
+    letter-spacing: -0.02em; color: #fff;
+    background: radial-gradient(120% 120% at 30% 25%, #ff5a6e 0%, #e11d48 55%, #a30d33 100%);
+    box-shadow:
+      0 0 0 10px rgba(225,29,72,0.10),
+      0 22px 60px rgba(225,29,72,0.42),
+      inset 0 2px 8px rgba(255,255,255,0.35),
+      inset 0 -14px 30px rgba(0,0,0,0.35);
+    transition: transform .09s ease, box-shadow .2s ease, filter .2s ease;
+  }
+  #btn:active { transform: scale(0.94); filter: brightness(1.06); }
+  #btn.pulse { animation: pop .28s ease; }
+  @keyframes pop { 0%{transform:scale(1)} 40%{transform:scale(1.07)} 100%{transform:scale(1)} }
+  .label {
+    margin-top: 34px; min-height: 2.6em;
+    text-align: center; line-height: 1.35;
+  }
+  .word { font-size: clamp(24px, 7vw, 40px); font-weight: 700; }
+  .lang { margin-top: 6px; font-size: 15px; color: #9aa0b4; letter-spacing: .02em; }
+  .hint { position: fixed; left: 0; right: 0; bottom: max(env(safe-area-inset-bottom), 14px);
+          text-align: center; font-size: 12px; color: #4b5066; }
+</style>
+</head>
+<body>
+  <main class="stage">
+    <button id="btn" aria-label="Say no">NO</button>
+    <div class="label">
+      <div class="word" id="word">&nbsp;</div>
+      <div class="lang" id="lang">Tap the button</div>
+    </div>
+  </main>
+  <div class="hint">30 voices · random language · turn up the volume 🔊</div>
+
+<script>
+(function () {
+  // 30 languages: BCP-47 code + the word for "no"
+  var LANGS = [
+    { code: "en-US", word: "No",     name: "English" },
+    { code: "en-GB", word: "No",     name: "English (UK)" },
+    { code: "de-DE", word: "Nein",   name: "German" },
+    { code: "fr-FR", word: "Non",    name: "French" },
+    { code: "es-ES", word: "No",     name: "Spanish" },
+    { code: "it-IT", word: "No",     name: "Italian" },
+    { code: "pt-BR", word: "Não",    name: "Portuguese" },
+    { code: "nl-NL", word: "Nee",    name: "Dutch" },
+    { code: "ru-RU", word: "Нет",    name: "Russian" },
+    { code: "ja-JP", word: "いいえ",  name: "Japanese" },
+    { code: "ko-KR", word: "아니요",  name: "Korean" },
+    { code: "zh-CN", word: "不",      name: "Chinese" },
+    { code: "ar-SA", word: "لا",      name: "Arabic" },
+    { code: "hi-IN", word: "नहीं",     name: "Hindi" },
+    { code: "tr-TR", word: "Hayır",  name: "Turkish" },
+    { code: "pl-PL", word: "Nie",    name: "Polish" },
+    { code: "sv-SE", word: "Nej",    name: "Swedish" },
+    { code: "da-DK", word: "Nej",    name: "Danish" },
+    { code: "nb-NO", word: "Nei",    name: "Norwegian" },
+    { code: "fi-FI", word: "Ei",     name: "Finnish" },
+    { code: "el-GR", word: "Όχι",    name: "Greek" },
+    { code: "cs-CZ", word: "Ne",     name: "Czech" },
+    { code: "hu-HU", word: "Nem",    name: "Hungarian" },
+    { code: "ro-RO", word: "Nu",     name: "Romanian" },
+    { code: "th-TH", word: "ไม่",     name: "Thai" },
+    { code: "he-IL", word: "לא",      name: "Hebrew" },
+    { code: "id-ID", word: "Tidak",  name: "Indonesian" },
+    { code: "vi-VN", word: "Không",  name: "Vietnamese" },
+    { code: "uk-UA", word: "Ні",     name: "Ukrainian" },
+    { code: "ca-ES", word: "No",     name: "Catalan" }
+  ];
+
+  var synth = window.speechSynthesis;
+  var voices = [];
+  var lastIdx = -1;
+
+  function loadVoices() { if (synth) voices = synth.getVoices() || []; }
+  loadVoices();
+  if (synth && typeof synth.onvoiceschanged !== "undefined") {
+    synth.onvoiceschanged = loadVoices;
+  }
+
+  // Pick the best installed voice for a language code (exact, then base language).
+  function pickVoice(code) {
+    if (!voices.length) return null;
+    var base = code.split("-")[0].toLowerCase();
+    var exact = voices.filter(function (v) { return v.lang && v.lang.toLowerCase() === code.toLowerCase(); });
+    if (exact.length) return exact[Math.floor(Math.random() * exact.length)];
+    var same = voices.filter(function (v) { return v.lang && v.lang.toLowerCase().split("-")[0] === base; });
+    if (same.length) return same[Math.floor(Math.random() * same.length)];
+    return null;
+  }
+
+  var btn  = document.getElementById("btn");
+  var word = document.getElementById("word");
+  var lang = document.getElementById("lang");
+
+  function sayNo() {
+    if (!synth) { lang.textContent = "Speech not supported on this browser"; return; }
+    loadVoices();
+
+    // Random language, never the same one twice in a row.
+    var i;
+    do { i = Math.floor(Math.random() * LANGS.length); } while (LANGS.length > 1 && i === lastIdx);
+    lastIdx = i;
+    var pick = LANGS[i];
+
+    synth.cancel(); // stop anything mid-flight so rapid taps stay snappy
+
+    var u = new SpeechSynthesisUtterance(pick.word);
+    u.lang = pick.code;
+    var v = pickVoice(pick.code);
+    if (v) u.lang = v.lang, u.voice = v;
+    u.rate  = 0.92 + Math.random() * 0.28;  // 0.92–1.20, adds vocal variety
+    u.pitch = 0.85 + Math.random() * 0.6;   // 0.85–1.45
+    u.volume = 1;
+
+    try { synth.speak(u); } catch (e) {}
+
+    word.textContent = pick.word;
+    lang.textContent = pick.name + (v ? "" : "  (system voice)");
+
+    btn.classList.remove("pulse");
+    void btn.offsetWidth; // reflow to restart animation
+    btn.classList.add("pulse");
+  }
+
+  // pointerup fires reliably after a real tap on iOS and counts as a user gesture.
+  btn.addEventListener("pointerup", function (e) { e.preventDefault(); sayNo(); });
+  btn.addEventListener("click", function (e) { e.preventDefault(); }); // avoid double-fire
+  // Keyboard access
+  btn.addEventListener("keyup", function (e) {
+    if (e.key === "Enter" || e.key === " ") sayNo();
+  });
+})();
+</script>
+</body>
+</html>
